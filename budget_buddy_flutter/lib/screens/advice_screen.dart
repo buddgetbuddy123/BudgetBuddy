@@ -4,7 +4,9 @@ import '../services/storage_service.dart';
 import '../utils/advice_helper.dart';
 
 class AdviceScreen extends StatefulWidget {
-  const AdviceScreen({super.key});
+  final int refreshTick;
+
+  const AdviceScreen({super.key, required this.refreshTick});
 
   @override
   State<AdviceScreen> createState() => _AdviceScreenState();
@@ -36,6 +38,14 @@ class _AdviceScreenState extends State<AdviceScreen> {
   void initState() {
     super.initState();
     load();
+  }
+
+  @override
+  void didUpdateWidget(covariant AdviceScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshTick != widget.refreshTick) {
+      load();
+    }
   }
 
   Future<void> load() async {

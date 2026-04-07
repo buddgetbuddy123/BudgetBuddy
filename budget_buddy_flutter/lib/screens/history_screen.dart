@@ -6,7 +6,9 @@ import '../services/storage_service.dart';
 import '../widgets/expense_card.dart';
 
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({super.key});
+  final int refreshTick;
+
+  const HistoryScreen({super.key, required this.refreshTick});
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -21,6 +23,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
   void initState() {
     super.initState();
     loadExpenses();
+  }
+
+  @override
+  void didUpdateWidget(covariant HistoryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshTick != widget.refreshTick) {
+      loadExpenses();
+    }
   }
 
   Future<void> loadExpenses() async {
@@ -82,12 +92,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Map<DateTime, double> getDailyTotals() {
     final days = getLast7Days();
-    final totals = <DateTime, double>{
-      for (final d in days) d: 0.0,
-    };
+    final totals = <DateTime, double>{for (final d in days) d: 0.0};
 
     for (final expense in expenses) {
-      final d = DateTime(expense.date.year, expense.date.month, expense.date.day);
+      final d = DateTime(
+        expense.date.year,
+        expense.date.month,
+        expense.date.day,
+      );
       if (totals.containsKey(d)) {
         totals[d] = totals[d]! + expense.amount;
       }
@@ -129,12 +141,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Map<DateTime, double> getMonthlyDailyTotals() {
     final days = getDaysOfCurrentMonth();
-    final totals = <DateTime, double>{
-      for (final d in days) d: 0.0,
-    };
+    final totals = <DateTime, double>{for (final d in days) d: 0.0};
 
     for (final expense in expenses) {
-      final d = DateTime(expense.date.year, expense.date.month, expense.date.day);
+      final d = DateTime(
+        expense.date.year,
+        expense.date.month,
+        expense.date.day,
+      );
       if (totals.containsKey(d)) {
         totals[d] = totals[d]! + expense.amount;
       }
@@ -166,14 +180,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Map<String, double> getCategoryTotals() {
-    final totals = <String, double>{
-      'needs': 0,
-      'wants': 0,
-      'savings': 0,
-    };
+    final totals = <String, double>{'needs': 0, 'wants': 0, 'savings': 0};
 
     for (final expense in expenses) {
-      totals[expense.category] = (totals[expense.category] ?? 0) + expense.amount;
+      totals[expense.category] =
+          (totals[expense.category] ?? 0) + expense.amount;
     }
 
     return totals;
@@ -643,53 +654,78 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   Widget build(BuildContext context) {
     if (expenses.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Expense History')),
-        body: const Center(
-          child: Text(
-            'No Expense History Yet',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-          ),
+      return RefreshIndicator(
+        onRefresh: loadExpenses,
+        child: ListView(
+          padding: const EdgeInsets.all(15),
+          children: const [
+            SizedBox(height: 20),
+            Text(
+              'Expense History',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+              ),
+            ),
+            SizedBox(height: 30),
+            Center(
+              child: Text(
+                'No Expense History Yet',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
         ),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Expense History'),
-        actions: [
-          IconButton(
-            onPressed: () {
-              setState(() {
-                showCharts = !showCharts;
-              });
-            },
-            icon: Icon(showCharts ? Icons.visibility_off : Icons.visibility),
-          ),
-          IconButton(
-            onPressed: clearAll,
-            icon: const Icon(Icons.delete_sweep),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: loadExpenses,
-        child: ListView(
-          padding: const EdgeInsets.all(15),
-          children: [
-            buildSummarySection(),
-            const SizedBox(height: 12),
-            if (showCharts) ...[
-              buildLineChart(),
-              const SizedBox(height: 12),
-              buildMonthlyLineChart(),
-              const SizedBox(height: 12),
-              buildPieChart(),
-              const SizedBox(height: 12),
+    return RefreshIndicator(
+      onRefresh: loadExpenses,
+      child: ListView(
+        padding: const EdgeInsets.all(15),
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Expense History',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF333333),
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  setState(() {
+                    showCharts = !showCharts;
+                  });
+                },
+                icon: Icon(
+                  showCharts ? Icons.visibility_off : Icons.visibility,
+                ),
+              ),
+              IconButton(
+                onPressed: clearAll,
+                icon: const Icon(Icons.delete_sweep),
+              ),
             ],
-            buildExpensesBox(),
+          ),
+          const SizedBox(height: 15),
+          buildSummarySection(),
+          const SizedBox(height: 12),
+          if (showCharts) ...[
+            buildLineChart(),
+            const SizedBox(height: 12),
+            buildMonthlyLineChart(),
+            const SizedBox(height: 12),
+            buildPieChart(),
+            const SizedBox(height: 12),
           ],
-        ),
+          buildExpensesBox(),
+        ],
       ),
     );
   }
@@ -699,10 +735,7 @@ class _LegendItem extends StatelessWidget {
   final Color color;
   final String label;
 
-  const _LegendItem({
-    required this.color,
-    required this.label,
-  });
+  const _LegendItem({required this.color, required this.label});
 
   @override
   Widget build(BuildContext context) {

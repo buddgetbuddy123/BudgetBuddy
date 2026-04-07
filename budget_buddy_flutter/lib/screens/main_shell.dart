@@ -13,19 +13,38 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int currentIndex = 0;
+  int refreshTick = 0;
+
+  void changeTab(int index) {
+    setState(() {
+      currentIndex = index;
+    });
+  }
+
+  void triggerRefresh() {
+    setState(() {
+      refreshTick++;
+    });
+  }
 
   Widget getCurrentPage() {
     switch (currentIndex) {
       case 0:
-        return const HomeScreen();
+        return HomeScreen(
+          onNavigateToTab: changeTab,
+          refreshTick: refreshTick,
+        );
       case 1:
-        return const HistoryScreen();
+        return HistoryScreen(refreshTick: refreshTick);
       case 2:
-        return const BudgetScreen();
+        return BudgetScreen(refreshTick: refreshTick);
       case 3:
-        return const AdviceScreen();
+        return AdviceScreen(refreshTick: refreshTick);
       default:
-        return const HomeScreen();
+        return HomeScreen(
+          onNavigateToTab: changeTab,
+          refreshTick: refreshTick,
+        );
     }
   }
 
@@ -35,11 +54,7 @@ class _MainShellState extends State<MainShell> {
       body: getCurrentPage(),
       bottomNavigationBar: NavigationBar(
         selectedIndex: currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            currentIndex = index;
-          });
-        },
+        onDestinationSelected: changeTab,
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
@@ -67,7 +82,7 @@ class _MainShellState extends State<MainShell> {
         onPressed: () async {
           await Navigator.pushNamed(context, '/scan');
           if (!mounted) return;
-          setState(() {});
+          triggerRefresh();
         },
         child: const Icon(Icons.camera_alt),
       ),

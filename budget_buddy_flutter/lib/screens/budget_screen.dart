@@ -4,7 +4,9 @@ import '../services/storage_service.dart';
 import '../widgets/budget_card.dart';
 
 class BudgetScreen extends StatefulWidget {
-  const BudgetScreen({super.key});
+  final int refreshTick;
+
+  const BudgetScreen({super.key, required this.refreshTick});
 
   @override
   State<BudgetScreen> createState() => _BudgetScreenState();
@@ -22,6 +24,14 @@ class _BudgetScreenState extends State<BudgetScreen> {
   void initState() {
     super.initState();
     loadBudgetAndExpenses();
+  }
+
+  @override
+  void didUpdateWidget(covariant BudgetScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshTick != widget.refreshTick) {
+      loadBudgetAndExpenses();
+    }
   }
 
   Future<void> loadBudgetAndExpenses() async {
@@ -77,9 +87,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
         content: TextField(
           controller: controller,
           keyboardType: TextInputType.number,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-          ],
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Enter amount',
@@ -186,11 +194,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
       ),
       child: const Column(
         children: [
-          Icon(
-            Icons.info_outline,
-            size: 32,
-            color: Color(0xFF4A90E2),
-          ),
+          Icon(Icons.info_outline, size: 32, color: Color(0xFF4A90E2)),
           SizedBox(height: 10),
           Text(
             'Budget Management',
