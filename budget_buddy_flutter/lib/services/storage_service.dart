@@ -7,6 +7,8 @@ class StorageService {
   static const _expensesKey = 'expenses';
   static const _weeklyBudgetKey = 'weeklyBudget';
   static const _monthlyBudgetKey = 'monthlyBudget';
+  static const _weeklyAdviceAppliedKey = 'weeklyAdviceApplied';
+  static const _monthlyAdviceAppliedKey = 'monthlyAdviceApplied';
   static const _usersKey = 'users';
   static const _currentUserKey = 'currentUser';
 
@@ -71,6 +73,36 @@ class StorageService {
   Future<void> clearMonthlyBudget() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_monthlyBudgetKey);
+  }
+
+  Future<bool> getWeeklyAdviceApplied() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_weeklyAdviceAppliedKey) ?? false;
+  }
+
+  Future<bool> getMonthlyAdviceApplied() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_monthlyAdviceAppliedKey) ?? false;
+  }
+
+  Future<void> setWeeklyAdviceApplied(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_weeklyAdviceAppliedKey, value);
+  }
+
+  Future<void> setMonthlyAdviceApplied(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_monthlyAdviceAppliedKey, value);
+  }
+
+  Future<void> clearWeeklyAdviceApplied() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_weeklyAdviceAppliedKey);
+  }
+
+  Future<void> clearMonthlyAdviceApplied() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_monthlyAdviceAppliedKey);
   }
 
   Future<List<AppUser>> getUsers() async {
