@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/app_user.dart';
 import '../services/storage_service.dart';
+import '../services/expense_stats_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final ValueChanged<int> onNavigateToTab;
@@ -18,6 +19,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final storage = StorageService();
+  final statsService = ExpenseStatsService();
 
   double totalSpending = 0;
   int expenseCount = 0;
@@ -48,28 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final weekly = await storage.getWeeklyBudget();
       final monthly = await storage.getMonthlyBudget();
       final expenses = await storage.getExpenses();
-
-      final total = expenses.fold<double>(0, (sum, exp) => sum + exp.amount);
-
-      final now = DateTime.now();
-      final startOfWeek = DateTime(
-        now.year,
-        now.month,
-        now.day,
-      ).subtract(Duration(days: now.weekday % 7));
-      final startOfMonth = DateTime(now.year, now.month, 1);
-
-      double weekTotal = 0;
-      double monthTotal = 0;
-
-      for (final exp in expenses) {
-        if (!exp.date.isBefore(startOfWeek)) {
-          weekTotal += exp.amount;
-        }
-        if (!exp.date.isBefore(startOfMonth)) {
-          monthTotal += exp.amount;
-        }
-      }
+      final stats = statsService.calculate(expenses);
 
       if (!mounted) return;
 
@@ -77,11 +58,11 @@ class _HomeScreenState extends State<HomeScreen> {
         currentUser = user;
         weeklyBudget = weekly;
         monthlyBudget = monthly;
-        totalSpending = total;
-        expenseCount = expenses.length;
-        avgExpense = expenses.isNotEmpty ? total / expenses.length : 0;
-        weeklySpent = weekTotal;
-        monthlySpent = monthTotal;
+        totalSpending = stats.total;
+        expenseCount = stats.count;
+        avgExpense = stats.averageExpense;
+        weeklySpent = stats.weeklyTotal;
+        monthlySpent = stats.monthlyTotal;
       });
     } catch (error) {
       debugPrint('Error loading expenses: $error');
@@ -180,7 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Welcome to Budget Buddy! 👋',
+            'Welcome to Budget Buddy!',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
@@ -537,4 +518,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-} 
+}

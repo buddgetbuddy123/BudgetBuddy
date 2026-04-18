@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/expense.dart';
 import '../services/storage_service.dart';
+import '../services/expense_stats_service.dart';
 import '../widgets/expense_card.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -16,6 +17,8 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final storage = StorageService();
+  final statsService = ExpenseStatsService();
+
   List<Expense> expenses = [];
   bool showCharts = true;
 
@@ -48,38 +51,47 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Future<void> clearAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Clear all expenses?'),
+        content: const Text('This will permanently remove all saved expenses.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              'Delete All',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
     await storage.clearExpenses();
     await loadExpenses();
   }
 
   double getMonthlySpending() {
-    final now = DateTime.now();
-    final startOfMonth = DateTime(now.year, now.month, 1);
-
-    return expenses
-        .where((expense) => !expense.date.isBefore(startOfMonth))
-        .fold<double>(0, (sum, expense) => sum + expense.amount);
+    return statsService.calculate(expenses).monthlyTotal;
   }
 
   double getWeeklySpending() {
-    final now = DateTime.now();
-    final startOfWeek = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    ).subtract(Duration(days: now.weekday % 7));
-
-    return expenses
-        .where((expense) => !expense.date.isBefore(startOfWeek))
-        .fold<double>(0, (sum, expense) => sum + expense.amount);
+    return statsService.calculate(expenses).weeklyTotal;
   }
 
   double getTotalSpending() {
-    return expenses.fold<double>(0, (sum, expense) => sum + expense.amount);
+    return statsService.calculate(expenses).total;
   }
 
   int getExpenseCount() {
-    return expenses.length;
+    return statsService.calculate(expenses).count;
   }
 
   List<DateTime> getLast7Days() {

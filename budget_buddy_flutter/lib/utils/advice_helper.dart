@@ -15,6 +15,10 @@ Map<String, double> getCategoryBreakdown(List<Expense> expenses) {
   return breakdown;
 }
 
+String _buildMessage(String title, String body) {
+  return '$title\n\n$body';
+}
+
 String getAdvice({
   required double totalSpending,
   required List<Expense> expenses,
@@ -24,7 +28,7 @@ String getAdvice({
   double? monthlyBudget,
 }) {
   if (expenses.isEmpty) {
-    return 'Start tracking your expenses to get personalized budget advice! 🎯';
+    return 'Start tracking your expenses to get personalized budget advice.';
   }
 
   final categoryTotals = getCategoryBreakdown(expenses);
@@ -47,92 +51,113 @@ String getAdvice({
 
   if (savingsPercent < 10) {
     final needToSave = (totalSpending * 0.20) - savingsTotal;
-    return "💰 LOW SAVINGS ALERT! You're only saving ${savingsPercent.toStringAsFixed(0)}% "
-        "(₱${savingsTotal.toStringAsFixed(2)}) of your total spending. "
-        "You should be saving at least 20% (₱${needToSave.toStringAsFixed(2)} more). "
-        "Cut back on wants to increase savings!";
+    return _buildMessage(
+      'Low savings alert',
+      "You're only saving ${savingsPercent.toStringAsFixed(0)}% "
+      "(₱${savingsTotal.toStringAsFixed(2)}) of your total spending. "
+      "Try to save at least 20% by adding ₱${needToSave.toStringAsFixed(2)} more.",
+    );
   }
 
   if (wantsPercent > 40) {
     final excessWants = wantsTotal - (totalSpending * 0.30);
-    return "🎮 HIGH WANTS SPENDING! You're spending ${wantsPercent.toStringAsFixed(0)}% "
-        "(₱${wantsTotal.toStringAsFixed(2)}) on wants. Recommended is 30%. "
-        "You're overspending on wants by ₱${excessWants.toStringAsFixed(2)}. "
-        "Reduce entertainment, dining out, and treats!";
+    return _buildMessage(
+      'High wants spending',
+      "You're spending ${wantsPercent.toStringAsFixed(0)}% "
+      "(₱${wantsTotal.toStringAsFixed(2)}) on wants. "
+      "Recommended is 30%. You're over by ₱${excessWants.toStringAsFixed(2)}.",
+    );
   }
 
   if (needsPercent > 60) {
     final excessNeeds = needsTotal - (totalSpending * 0.50);
-    return "🍔 HIGH NEEDS SPENDING! You're spending ${needsPercent.toStringAsFixed(0)}% "
-        "(₱${needsTotal.toStringAsFixed(2)}) on needs. Recommended is 50%. "
-        "Review if all expenses are truly essential. Can you meal prep? "
-        "Find cheaper alternatives? You could save ₱${excessNeeds.toStringAsFixed(2)}.";
+    return _buildMessage(
+      'High needs spending',
+      "You're spending ${needsPercent.toStringAsFixed(0)}% "
+      "(₱${needsTotal.toStringAsFixed(2)}) on needs. "
+      "Review essential expenses and try to reduce about ₱${excessNeeds.toStringAsFixed(2)}.",
+    );
   }
 
   if (monthlyBudget != null && monthlySpent > monthlyBudget) {
     final excess = monthlySpent - monthlyBudget;
-    return "🚨 BUDGET EXCEEDED! You've spent ₱${monthlySpent.toStringAsFixed(2)} this month "
-        "(budget: ₱${monthlyBudget.toStringAsFixed(2)}). You're over by "
-        "₱${excess.toStringAsFixed(2)}. Your wants are ${wantsPercent.toStringAsFixed(0)}%. "
-        "STOP all non-essential spending now!";
+    return _buildMessage(
+      'Monthly budget exceeded',
+      "You've spent ₱${monthlySpent.toStringAsFixed(2)} this month "
+      "with a budget of ₱${monthlyBudget.toStringAsFixed(2)}. "
+      "You're over by ₱${excess.toStringAsFixed(2)}.",
+    );
   }
 
   if (weeklyBudget != null && weeklySpent > weeklyBudget) {
     final excess = weeklySpent - weeklyBudget;
-    return "⚠️ WEEKLY BUDGET EXCEEDED! You've spent ₱${weeklySpent.toStringAsFixed(2)} this week "
-        "(budget: ₱${weeklyBudget.toStringAsFixed(2)}). You're over by "
-        "₱${excess.toStringAsFixed(2)}. Avoid wants for the rest of the week!";
+    return _buildMessage(
+      'Weekly budget exceeded',
+      "You've spent ₱${weeklySpent.toStringAsFixed(2)} this week "
+      "with a budget of ₱${weeklyBudget.toStringAsFixed(2)}. "
+      "You're over by ₱${excess.toStringAsFixed(2)}.",
+    );
   }
 
   if (projectedMonthly > 10000) {
-    return "📊 HIGH PROJECTED SPENDING! Based on your current rate "
-        "(₱${avgDailySpending.toStringAsFixed(2)}/day), you're projected to spend "
-        "₱${projectedMonthly.toStringAsFixed(2)} per month. This is very high for a student! "
-        "Current breakdown: Needs ${needsPercent.toStringAsFixed(0)}%, "
-        "Wants ${wantsPercent.toStringAsFixed(0)}%, "
-        "Savings ${savingsPercent.toStringAsFixed(0)}%.";
+    return _buildMessage(
+      'High projected spending',
+      "Based on your current rate of ₱${avgDailySpending.toStringAsFixed(2)} per day, "
+      "you may spend ₱${projectedMonthly.toStringAsFixed(2)} this month.",
+    );
   }
 
   if (projectedMonthly > 7000) {
-    return "⚡ MODERATE-HIGH SPENDING. You're averaging ₱${avgDailySpending.toStringAsFixed(2)} "
-        "per day (₱${projectedMonthly.toStringAsFixed(2)}/month projected). "
-        "Try to reduce daily spending to ₱200-230. "
-        "Your wants (${wantsPercent.toStringAsFixed(0)}%) could be reduced.";
+    return _buildMessage(
+      'Moderate-high spending',
+      "You're averaging ₱${avgDailySpending.toStringAsFixed(2)} per day "
+      "with a projected monthly spend of ₱${projectedMonthly.toStringAsFixed(2)}.",
+    );
   }
 
   if (savingsPercent >= 25) {
-    return "🏆 EXCELLENT SAVINGS! You're saving ${savingsPercent.toStringAsFixed(0)}% "
-        "(₱${savingsTotal.toStringAsFixed(2)}) - above the 20% target! Keep this up! "
-        "Your spending is balanced: Needs ${needsPercent.toStringAsFixed(0)}%, "
-        "Wants ${wantsPercent.toStringAsFixed(0)}%.";
+    return _buildMessage(
+      'Excellent savings',
+      "You're saving ${savingsPercent.toStringAsFixed(0)}% "
+      "(₱${savingsTotal.toStringAsFixed(2)}), which is above the 20% target.",
+    );
   }
 
   if (savingsPercent >= 20) {
-    return "✅ GREAT JOB! You're saving ${savingsPercent.toStringAsFixed(0)}% "
-        "(₱${savingsTotal.toStringAsFixed(2)}) - hitting the 20% target! "
-        "Your budget breakdown: Needs ${needsPercent.toStringAsFixed(0)}%, "
-        "Wants ${wantsPercent.toStringAsFixed(0)}%. Keep it up!";
+    return _buildMessage(
+      'Great job',
+      "You're saving ${savingsPercent.toStringAsFixed(0)}% "
+      "(₱${savingsTotal.toStringAsFixed(2)}), which meets the 20% target.",
+    );
   }
 
   if (savingsPercent >= 15) {
     final needMore = (totalSpending * 0.20) - savingsTotal;
-    return "👍 GOOD SAVINGS! You're saving ${savingsPercent.toStringAsFixed(0)}% "
-        "(₱${savingsTotal.toStringAsFixed(2)}). Almost at 20% target! "
-        "Try to save ₱${needMore.toStringAsFixed(2)} more by reducing wants "
-        "(currently ${wantsPercent.toStringAsFixed(0)}%).";
+    return _buildMessage(
+      'Good savings',
+      "You're saving ${savingsPercent.toStringAsFixed(0)}% "
+      "(₱${savingsTotal.toStringAsFixed(2)}). "
+      "Try to save ₱${needMore.toStringAsFixed(2)} more to reach 20%.",
+    );
   }
 
   if (wantsPercent > 35) {
-    return "📊 Spending Breakdown: Needs ${needsPercent.toStringAsFixed(0)}%, "
-        "Wants ${wantsPercent.toStringAsFixed(0)}%, "
-        "Savings ${savingsPercent.toStringAsFixed(0)}%. "
-        "Your wants spending is slightly high. Aim for 30% to improve savings!";
+    return _buildMessage(
+      'Spending breakdown',
+      "Needs: ${needsPercent.toStringAsFixed(0)}%, "
+      "Wants: ${wantsPercent.toStringAsFixed(0)}%, "
+      "Savings: ${savingsPercent.toStringAsFixed(0)}%. "
+      "Your wants spending is a bit high.",
+    );
   }
 
-  return "✨ BALANCED SPENDING! Needs ${needsPercent.toStringAsFixed(0)}%, "
-      "Wants ${wantsPercent.toStringAsFixed(0)}%, "
-      "Savings ${savingsPercent.toStringAsFixed(0)}%. "
-      "You're close to the ideal 50/30/20 rule. Keep tracking to maintain this!";
+  return _buildMessage(
+    'Balanced spending',
+    "Needs: ${needsPercent.toStringAsFixed(0)}%, "
+    "Wants: ${wantsPercent.toStringAsFixed(0)}%, "
+    "Savings: ${savingsPercent.toStringAsFixed(0)}%. "
+    "You're close to the 50/30/20 rule.",
+  );
 }
 
 List<String> getBudgetTips({
@@ -174,38 +199,33 @@ List<String> getBudgetTips({
         wantsTotal > 0 ? ((needToSave / wantsTotal) * 100) : 0.0;
 
     tips.add(
-      "💰 Save more! You're at ${savingsPercent.toStringAsFixed(0)}% savings "
-      "(₱${savingsTotal.toStringAsFixed(2)}). Target is 20%. "
-      "Save ₱${needToSave.toStringAsFixed(2)} more by cutting wants by "
+      "Save more. You're at ${savingsPercent.toStringAsFixed(0)}% savings. "
+      "Try to save ₱${needToSave.toStringAsFixed(2)} more by cutting wants by "
       "${wantsCutPercent.toStringAsFixed(0)}%.",
     );
   } else if (savingsPercent >= 20) {
     tips.add(
-      "✅ Great savings rate at ${savingsPercent.toStringAsFixed(0)}%! "
-      "You're meeting the 20% target. Keep this up!",
+      "Great savings rate at ${savingsPercent.toStringAsFixed(0)}%. "
+      "You're meeting the 20% target.",
     );
   }
 
   if (wantsPercent > 35) {
     final excessWants = wantsTotal - (totalSpending * 0.30);
-    final savingsGain = excessWants;
     tips.add(
-      "🎮 Reduce wants from ${wantsPercent.toStringAsFixed(0)}% to 30%. "
-      "Cut ₱${excessWants.toStringAsFixed(2)} in entertainment/treats "
-      "to boost savings by ₱${savingsGain.toStringAsFixed(2)}.",
+      "Reduce wants from ${wantsPercent.toStringAsFixed(0)}% to 30%. "
+      "Cut about ₱${excessWants.toStringAsFixed(2)} in non-essential spending.",
     );
   } else if (wantsPercent <= 30) {
     tips.add(
-      "👍 Wants spending is good at ${wantsPercent.toStringAsFixed(0)}% "
-      "(target: 30%). You're controlling discretionary spending well!",
+      "Your wants spending is under control at ${wantsPercent.toStringAsFixed(0)}%.",
     );
   }
 
   if (needsPercent > 55) {
     tips.add(
-      "🍔 Needs are ${needsPercent.toStringAsFixed(0)}% (target: 50%). "
-      "Review essentials: Can you meal prep instead of buying meals? "
-      "Walk short distances? Batch errands to save transport?",
+      "Needs are ${needsPercent.toStringAsFixed(0)}%. "
+      "Review essentials like meals and transportation for possible savings.",
     );
   }
 
@@ -213,39 +233,31 @@ List<String> getBudgetTips({
     const dailyTarget = 233.0;
     final needToCut = avgDailySpending - dailyTarget;
     tips.add(
-      "📊 You're spending ₱${avgDailySpending.toStringAsFixed(2)}/day "
-      "(₱${projectedMonthly.toStringAsFixed(2)}/month projected). "
-      "Reduce to ₱${dailyTarget.toStringAsFixed(0)}/day by cutting "
-      "₱${needToCut.toStringAsFixed(2)} daily.",
+      "You're spending ₱${avgDailySpending.toStringAsFixed(2)} per day. "
+      "Try reducing by ₱${needToCut.toStringAsFixed(2)} daily.",
     );
   } else if (projectedMonthly > 5000) {
     tips.add(
-      "📈 Moderate spending: ₱${avgDailySpending.toStringAsFixed(2)}/day "
-      "(₱${projectedMonthly.toStringAsFixed(2)}/month projected). "
-      "You're on track for student budget!",
+      "Your spending is moderate at ₱${avgDailySpending.toStringAsFixed(2)} per day.",
     );
   } else {
     tips.add(
-      "🌟 Low spending! ₱${avgDailySpending.toStringAsFixed(2)}/day average. "
-      "Great control! Make sure you're not compromising on needs.",
+      "You're maintaining a low daily average of ₱${avgDailySpending.toStringAsFixed(2)}.",
     );
   }
 
   if (weeklyBudget == null && monthlyBudget == null) {
     tips.add(
-      "💡 Set a budget! Based on your spending "
-      "(₱${projectedMonthly.toStringAsFixed(2)}/month), "
-      "try a weekly budget of ₱${(projectedWeekly * 0.9).toStringAsFixed(2)} "
-      "to reduce spending by 10%.",
+      "Set a budget. Based on your spending, try a weekly budget of "
+      "₱${(projectedWeekly * 0.9).toStringAsFixed(2)}.",
     );
   }
 
   final avgExpense = totalSpending / expenses.length;
   if (avgExpense > 250) {
     tips.add(
-      "💳 Average expense is ₱${avgExpense.toStringAsFixed(2)}. "
-      "You're making expensive purchases. Look for budget alternatives "
-      "or buy in bulk to reduce cost per transaction.",
+      "Your average expense is ₱${avgExpense.toStringAsFixed(2)}. "
+      "Look for cheaper alternatives where possible.",
     );
   }
 
@@ -257,6 +269,8 @@ Map<String, dynamic> getRecommendedBudgets(List<Expense> expenses) {
     return {
       'weekly': 1500,
       'monthly': 5000,
+      'currentWeekly': 0,
+      'currentMonthly': 0,
       'message': 'Default student budget recommendations',
     };
   }

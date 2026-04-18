@@ -30,10 +30,7 @@ class _MainShellState extends State<MainShell> {
   Widget getCurrentPage() {
     switch (currentIndex) {
       case 0:
-        return HomeScreen(
-          onNavigateToTab: changeTab,
-          refreshTick: refreshTick,
-        );
+        return HomeScreen(onNavigateToTab: changeTab, refreshTick: refreshTick);
       case 1:
         return HistoryScreen(refreshTick: refreshTick);
       case 2:
@@ -41,17 +38,14 @@ class _MainShellState extends State<MainShell> {
       case 3:
         return AdviceScreen(refreshTick: refreshTick);
       default:
-        return HomeScreen(
-          onNavigateToTab: changeTab,
-          refreshTick: refreshTick,
-        );
+        return HomeScreen(onNavigateToTab: changeTab, refreshTick: refreshTick);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: getCurrentPage(),
+      body: SafeArea(top: true, bottom: false, child: getCurrentPage()),
       bottomNavigationBar: NavigationBar(
         selectedIndex: currentIndex,
         onDestinationSelected: changeTab,

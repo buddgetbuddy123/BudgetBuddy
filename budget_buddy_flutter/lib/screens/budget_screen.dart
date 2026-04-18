@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/storage_service.dart';
+import '../services/expense_stats_service.dart';
 import '../widgets/budget_card.dart';
 
 class BudgetScreen extends StatefulWidget {
@@ -14,6 +15,7 @@ class BudgetScreen extends StatefulWidget {
 
 class _BudgetScreenState extends State<BudgetScreen> {
   final storage = StorageService();
+  final statsService = ExpenseStatsService();
 
   double? savedWeekly;
   double? savedMonthly;
@@ -39,34 +41,15 @@ class _BudgetScreenState extends State<BudgetScreen> {
       final weekly = await storage.getWeeklyBudget();
       final monthly = await storage.getMonthlyBudget();
       final expenses = await storage.getExpenses();
-
-      final now = DateTime.now();
-      final startOfWeek = DateTime(
-        now.year,
-        now.month,
-        now.day,
-      ).subtract(Duration(days: now.weekday % 7));
-      final startOfMonth = DateTime(now.year, now.month, 1);
-
-      double wTotal = 0;
-      double mTotal = 0;
-
-      for (final exp in expenses) {
-        if (!exp.date.isBefore(startOfWeek)) {
-          wTotal += exp.amount;
-        }
-        if (!exp.date.isBefore(startOfMonth)) {
-          mTotal += exp.amount;
-        }
-      }
+      final stats = statsService.calculate(expenses);
 
       if (!mounted) return;
 
       setState(() {
         savedWeekly = weekly;
         savedMonthly = monthly;
-        weeklySpent = wTotal;
-        monthlySpent = mTotal;
+        weeklySpent = stats.weeklyTotal;
+        monthlySpent = stats.monthlyTotal;
       });
     } catch (err) {
       debugPrint('Error loading budget: $err');

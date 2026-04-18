@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/expense.dart';
 import '../services/storage_service.dart';
+import '../services/expense_stats_service.dart';
 import '../utils/advice_helper.dart';
 
 class AdviceScreen extends StatefulWidget {
@@ -14,6 +15,7 @@ class AdviceScreen extends StatefulWidget {
 
 class _AdviceScreenState extends State<AdviceScreen> {
   final storage = StorageService();
+  final statsService = ExpenseStatsService();
 
   List<Expense> expenses = [];
   double totalSpending = 0;
@@ -55,60 +57,32 @@ class _AdviceScreenState extends State<AdviceScreen> {
     final savedWeeklyAdviceApplied = await storage.getWeeklyAdviceApplied();
     final savedMonthlyAdviceApplied = await storage.getMonthlyAdviceApplied();
 
-    final total = loaded.fold<double>(0, (sum, e) => sum + e.amount);
+    final stats = statsService.calculate(loaded);
+    final avgDaily = statsService.projectedDailyAverage(loaded);
+    final projWeekly = statsService.projectedWeekly(loaded);
+    final projMonthly = statsService.projectedMonthly(loaded);
 
-    final now = DateTime.now();
-    final startOfWeek = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    ).subtract(Duration(days: now.weekday % 7));
-    final startOfMonth = DateTime(now.year, now.month, 1);
-
-    double week = 0;
-    double month = 0;
-
-    for (final e in loaded) {
-      if (!e.date.isBefore(startOfWeek)) week += e.amount;
-      if (!e.date.isBefore(startOfMonth)) month += e.amount;
-    }
-
-    double avgDaily = 0;
-    double projMonthly = 0;
-    double projWeekly = 0;
-    Map<String, dynamic>? recommended;
-
-    if (loaded.isNotEmpty) {
-      final dates = loaded.map((e) => e.date).toList()..sort();
-      final daysDiff = dates.length <= 1
-          ? 1
-          : dates.last.difference(dates.first).inDays.clamp(1, 999999);
-
-      avgDaily = total / daysDiff;
-      projMonthly = avgDaily * 30;
-      projWeekly = avgDaily * 7;
-
-      recommended = {
-        'weekly': {
-          'ideal': (avgDaily * 7 * 0.9).round(),
-          'current': projWeekly.round(),
-          'message': 'Based on your current spending',
-        },
-        'monthly': {
-          'ideal': (avgDaily * 30 * 0.9).round(),
-          'current': projMonthly.round(),
-          'message': 'Suggested to reduce spending by 10%',
-        },
-      };
-    }
+    final rawRecommended = getRecommendedBudgets(loaded);
+    final recommended = {
+      'weekly': {
+        'ideal': rawRecommended['weekly'] as int,
+        'current': rawRecommended['currentWeekly'] as int,
+        'message': rawRecommended['message'],
+      },
+      'monthly': {
+        'ideal': rawRecommended['monthly'] as int,
+        'current': rawRecommended['currentMonthly'] as int,
+        'message': rawRecommended['message'],
+      },
+    };
 
     if (!mounted) return;
 
     setState(() {
       expenses = loaded;
-      totalSpending = total;
-      weeklySpent = week;
-      monthlySpent = month;
+      totalSpending = stats.total;
+      weeklySpent = stats.weeklyTotal;
+      monthlySpent = stats.monthlyTotal;
       dailyAverage = avgDaily;
       projectedMonthly = projMonthly;
       projectedWeekly = projWeekly;
@@ -119,19 +93,19 @@ class _AdviceScreenState extends State<AdviceScreen> {
       recommendedBudgets = recommended;
 
       advice = getAdvice(
-        totalSpending: total,
+        totalSpending: stats.total,
         expenses: loaded,
-        weeklySpent: week,
-        monthlySpent: month,
+        weeklySpent: stats.weeklyTotal,
+        monthlySpent: stats.monthlyTotal,
         weeklyBudget: savedWeeklyBudget,
         monthlyBudget: savedMonthlyBudget,
       );
 
       tips = getBudgetTips(
-        totalSpending: total,
+        totalSpending: stats.total,
         expenses: loaded,
-        weeklySpent: week,
-        monthlySpent: month,
+        weeklySpent: stats.weeklyTotal,
+        monthlySpent: stats.monthlyTotal,
         weeklyBudget: savedWeeklyBudget,
         monthlyBudget: savedMonthlyBudget,
       );
@@ -261,9 +235,7 @@ class _AdviceScreenState extends State<AdviceScreen> {
               icon: Icons.fastfood,
               iconColor: Colors.green,
               label: 'Needs',
-              percent: categoryAnalysis!['needs']['percentage'].toStringAsFixed(
-                0,
-              ),
+              percent: categoryAnalysis!['needs']['percentage'].toStringAsFixed(0),
               target: categoryAnalysis!['needs']['target'].toString(),
               amount: categoryAnalysis!['needs']['amount'],
             ),
@@ -271,9 +243,7 @@ class _AdviceScreenState extends State<AdviceScreen> {
               icon: Icons.sports_esports,
               iconColor: Colors.orange,
               label: 'Wants',
-              percent: categoryAnalysis!['wants']['percentage'].toStringAsFixed(
-                0,
-              ),
+              percent: categoryAnalysis!['wants']['percentage'].toStringAsFixed(0),
               target: categoryAnalysis!['wants']['target'].toString(),
               amount: categoryAnalysis!['wants']['amount'],
             ),
@@ -281,8 +251,7 @@ class _AdviceScreenState extends State<AdviceScreen> {
               icon: Icons.account_balance_wallet,
               iconColor: const Color(0xFF4A90E2),
               label: 'Savings',
-              percent: categoryAnalysis!['savings']['percentage']
-                  .toStringAsFixed(0),
+              percent: categoryAnalysis!['savings']['percentage'].toStringAsFixed(0),
               target: categoryAnalysis!['savings']['target'].toString(),
               amount: categoryAnalysis!['savings']['amount'],
             ),
@@ -544,7 +513,7 @@ class _AdviceScreenState extends State<AdviceScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Advice')),
+      appBar: AppBar(title: const Text('Advice', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF333333),))),
       body: RefreshIndicator(
         onRefresh: load,
         child: ListView(

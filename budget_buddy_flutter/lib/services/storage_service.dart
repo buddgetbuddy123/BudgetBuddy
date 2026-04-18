@@ -22,7 +22,6 @@ class StorageService {
       'weeklyAdviceApplied_$userId';
   String _monthlyAdviceAppliedKeyForUser(String userId) =>
       'monthlyAdviceApplied_$userId';
-
   Future<List<Expense>> getExpenses() async {
     final prefs = await SharedPreferences.getInstance();
     final userId = await _requireCurrentUserId();
