@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
 import '../models/app_user.dart';
 import '../services/storage_service.dart';
+
+// FIX #9: Helper to hash passwords with SHA-256 before storing or comparing.
+// This is a one-way hash — users cannot recover their password, only reset it.
+String _hashPassword(String password) {
+  final bytes = utf8.encode(password);
+  return sha256.convert(bytes).toString();
+}
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,7 +23,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final storage = StorageService();
   final usernameController = TextEditingController();
   final passwordController = TextEditingController();
-
   bool isLogin = true;
   bool showPassword = false;
 
@@ -43,10 +51,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (isLogin) {
       final users = await storage.getUsers();
+      // FIX #9: Compare hashed password instead of plaintext
       final match = users.where(
-        (u) => u.username.trim() == username && u.password == password,
+        (u) => u.username.trim() == username &&
+               u.password == _hashPassword(password),
       );
-
       if (match.isNotEmpty) {
         await storage.setCurrentUser(match.first);
         if (!mounted) return;
@@ -59,26 +68,22 @@ class _LoginScreenState extends State<LoginScreen> {
         _show('Password must be at least 4 characters');
         return;
       }
-
       final users = await storage.getUsers();
       final exists = users.any((u) => u.username.trim() == username);
-
       if (exists) {
         _show('Username already exists');
         return;
       }
-
       final newUser = AppUser(
         id: const Uuid().v4(),
         username: username,
-        password: password,
+        // FIX #9: Store hashed password — never store plaintext
+        password: _hashPassword(password),
         createdAt: DateTime.now(),
       );
-
       users.add(newUser);
       await storage.saveUsers(users);
       await storage.setCurrentUser(newUser);
-
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/main');
     }
@@ -163,7 +168,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-
                   Container(
                     padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
@@ -187,9 +191,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 22),
-
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     padding: const EdgeInsets.all(16),
@@ -237,9 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 24),
-
                   TextField(
                     controller: usernameController,
                     decoration: const InputDecoration(
@@ -267,22 +267,19 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 22),
-
                   ElevatedButton.icon(
                     onPressed: handleSubmit,
                     icon: Icon(isLogin ? Icons.login : Icons.person_add),
                     label: Text(primaryButtonText),
                   ),
-
                   const SizedBox(height: 12),
-
+                  // FIX #4: Fixed the self-contradictory hint text
                   Center(
                     child: Text(
                       isLogin
-                          ? 'Already have an account? You are on Login.'
-                          : 'New here? You are on Sign Up.',
+                          ? "Don't have an account? Tap Sign Up above."
+                          : 'Already have an account? Tap Login above.',
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,

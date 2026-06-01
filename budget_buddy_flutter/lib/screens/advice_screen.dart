@@ -6,7 +6,6 @@ import '../utils/advice_helper.dart';
 
 class AdviceScreen extends StatefulWidget {
   final int refreshTick;
-
   const AdviceScreen({super.key, required this.refreshTick});
 
   @override
@@ -16,7 +15,6 @@ class AdviceScreen extends StatefulWidget {
 class _AdviceScreenState extends State<AdviceScreen> {
   final storage = StorageService();
   final statsService = ExpenseStatsService();
-
   List<Expense> expenses = [];
   double totalSpending = 0;
   double dailyAverage = 0;
@@ -24,17 +22,17 @@ class _AdviceScreenState extends State<AdviceScreen> {
   double projectedWeekly = 0;
   double weeklySpent = 0;
   double monthlySpent = 0;
-
   double? weeklyBudget;
   double? monthlyBudget;
-
-  bool weeklyAdviceApplied = false;
-  bool monthlyAdviceApplied = false;
-
   String advice = '';
   List<String> tips = [];
   Map<String, dynamic>? categoryAnalysis;
   Map<String, dynamic>? recommendedBudgets;
+
+  // FIX #3: Removed weeklyAdviceApplied and monthlyAdviceApplied state fields.
+  // They were loaded from storage but never used to drive UI — the computed
+  // getters below already handle this correctly by comparing budget values.
+  // Also removed the corresponding storage calls from load().
 
   @override
   void initState() {
@@ -54,14 +52,12 @@ class _AdviceScreenState extends State<AdviceScreen> {
     final loaded = await storage.getExpenses();
     final savedWeeklyBudget = await storage.getWeeklyBudget();
     final savedMonthlyBudget = await storage.getMonthlyBudget();
-    final savedWeeklyAdviceApplied = await storage.getWeeklyAdviceApplied();
-    final savedMonthlyAdviceApplied = await storage.getMonthlyAdviceApplied();
-
+    // FIX #3: Removed getWeeklyAdviceApplied() and getMonthlyAdviceApplied()
+    // calls — those stored flags were redundant dead code.
     final stats = statsService.calculate(loaded);
     final avgDaily = statsService.projectedDailyAverage(loaded);
     final projWeekly = statsService.projectedWeekly(loaded);
     final projMonthly = statsService.projectedMonthly(loaded);
-
     final rawRecommended = getRecommendedBudgets(loaded);
     final recommended = {
       'weekly': {
@@ -75,9 +71,7 @@ class _AdviceScreenState extends State<AdviceScreen> {
         'message': rawRecommended['message'],
       },
     };
-
     if (!mounted) return;
-
     setState(() {
       expenses = loaded;
       totalSpending = stats.total;
@@ -88,10 +82,7 @@ class _AdviceScreenState extends State<AdviceScreen> {
       projectedWeekly = projWeekly;
       weeklyBudget = savedWeeklyBudget;
       monthlyBudget = savedMonthlyBudget;
-      weeklyAdviceApplied = savedWeeklyAdviceApplied;
-      monthlyAdviceApplied = savedMonthlyAdviceApplied;
       recommendedBudgets = recommended;
-
       advice = getAdvice(
         totalSpending: stats.total,
         expenses: loaded,
@@ -100,7 +91,6 @@ class _AdviceScreenState extends State<AdviceScreen> {
         weeklyBudget: savedWeeklyBudget,
         monthlyBudget: savedMonthlyBudget,
       );
-
       tips = getBudgetTips(
         totalSpending: stats.total,
         expenses: loaded,
@@ -109,28 +99,22 @@ class _AdviceScreenState extends State<AdviceScreen> {
         weeklyBudget: savedWeeklyBudget,
         monthlyBudget: savedMonthlyBudget,
       );
-
       categoryAnalysis = getCategoryAnalysis(loaded);
     });
   }
 
   Future<void> applyRecommendedBudget(String type) async {
     if (recommendedBudgets == null) return;
-
     final int value = type == 'weekly'
         ? recommendedBudgets!['weekly']['ideal'] as int
         : recommendedBudgets!['monthly']['ideal'] as int;
-
     if (type == 'weekly') {
       await storage.setWeeklyBudget(value.toDouble());
-      await storage.setWeeklyAdviceApplied(true);
     } else {
       await storage.setMonthlyBudget(value.toDouble());
-      await storage.setMonthlyAdviceApplied(true);
     }
-
+    // FIX #3: Removed setWeeklyAdviceApplied / setMonthlyAdviceApplied calls.
     if (!mounted) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -138,10 +122,11 @@ class _AdviceScreenState extends State<AdviceScreen> {
         ),
       ),
     );
-
     await load();
   }
 
+  // FIX #3: These computed getters are the single source of truth for whether
+  // a recommendation is applied — no stored boolean flag needed.
   bool get isWeeklyRecommendationApplied {
     if (recommendedBudgets == null || weeklyBudget == null) return false;
     return weeklyBudget ==
@@ -219,7 +204,6 @@ class _AdviceScreenState extends State<AdviceScreen> {
 
   Widget buildCategoryCard() {
     if (categoryAnalysis == null) return const SizedBox.shrink();
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -235,7 +219,8 @@ class _AdviceScreenState extends State<AdviceScreen> {
               icon: Icons.fastfood,
               iconColor: Colors.green,
               label: 'Needs',
-              percent: categoryAnalysis!['needs']['percentage'].toStringAsFixed(0),
+              percent: categoryAnalysis!['needs']['percentage']
+                  .toStringAsFixed(0),
               target: categoryAnalysis!['needs']['target'].toString(),
               amount: categoryAnalysis!['needs']['amount'],
             ),
@@ -243,7 +228,8 @@ class _AdviceScreenState extends State<AdviceScreen> {
               icon: Icons.sports_esports,
               iconColor: Colors.orange,
               label: 'Wants',
-              percent: categoryAnalysis!['wants']['percentage'].toStringAsFixed(0),
+              percent: categoryAnalysis!['wants']['percentage']
+                  .toStringAsFixed(0),
               target: categoryAnalysis!['wants']['target'].toString(),
               amount: categoryAnalysis!['wants']['amount'],
             ),
@@ -251,7 +237,8 @@ class _AdviceScreenState extends State<AdviceScreen> {
               icon: Icons.account_balance_wallet,
               iconColor: const Color(0xFF4A90E2),
               label: 'Savings',
-              percent: categoryAnalysis!['savings']['percentage'].toStringAsFixed(0),
+              percent: categoryAnalysis!['savings']['percentage']
+                  .toStringAsFixed(0),
               target: categoryAnalysis!['savings']['target'].toString(),
               amount: categoryAnalysis!['savings']['amount'],
             ),
@@ -313,7 +300,6 @@ class _AdviceScreenState extends State<AdviceScreen> {
 
   Widget buildRecommendationCard() {
     if (recommendedBudgets == null) return const SizedBox.shrink();
-
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFFE5F2FF),
@@ -489,7 +475,6 @@ class _AdviceScreenState extends State<AdviceScreen> {
 
   Widget buildTipsSection() {
     if (tips.isEmpty) return const SizedBox.shrink();
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -513,7 +498,16 @@ class _AdviceScreenState extends State<AdviceScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Advice', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF333333),))),
+      appBar: AppBar(
+        title: const Text(
+          'Advice',
+          style: TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF333333),
+          ),
+        ),
+      ),
       body: RefreshIndicator(
         onRefresh: load,
         child: ListView(

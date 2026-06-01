@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/app_user.dart';
 import '../services/storage_service.dart';
+import '../services/expense_stats_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -11,6 +12,8 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final storage = StorageService();
+
+  final statsService = ExpenseStatsService();
 
   AppUser? currentUser;
   int totalReceipts = 0;
@@ -31,12 +34,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final weekly = await storage.getWeeklyBudget();
     final monthly = await storage.getMonthlyBudget();
 
+
+    final stats = statsService.calculate(expenses);
+
     if (!mounted) return;
 
     setState(() {
       currentUser = user;
-      totalReceipts = expenses.length;
-      totalSpent = expenses.fold<double>(0, (sum, e) => sum + e.amount);
+      totalReceipts = stats.count;
+      totalSpent = stats.total;
       weeklyBudget = weekly;
       monthlyBudget = monthly;
       loading = false;
@@ -156,13 +162,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
             statTile(
               Icons.calendar_today,
               'Weekly budget',
-              weeklyBudget == null ? 'Not set' : '₱${weeklyBudget!.toStringAsFixed(2)}',
+              weeklyBudget == null
+                  ? 'Not set'
+                  : '₱${weeklyBudget!.toStringAsFixed(2)}',
             ),
             const SizedBox(height: 12),
             statTile(
               Icons.calendar_month,
               'Monthly budget',
-              monthlyBudget == null ? 'Not set' : '₱${monthlyBudget!.toStringAsFixed(2)}',
+              monthlyBudget == null
+                  ? 'Not set'
+                  : '₱${monthlyBudget!.toStringAsFixed(2)}',
             ),
             const SizedBox(height: 20),
             ElevatedButton.icon(

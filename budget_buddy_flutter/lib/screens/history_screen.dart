@@ -8,7 +8,6 @@ import '../widgets/expense_card.dart';
 
 class HistoryScreen extends StatefulWidget {
   final int refreshTick;
-
   const HistoryScreen({super.key, required this.refreshTick});
 
   @override
@@ -18,9 +17,10 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen> {
   final storage = StorageService();
   final statsService = ExpenseStatsService();
-
   List<Expense> expenses = [];
   bool showCharts = true;
+
+  ExpenseStats? _cachedStats;
 
   @override
   void initState() {
@@ -42,6 +42,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (!mounted) return;
     setState(() {
       expenses = loaded;
+      _cachedStats = statsService.calculate(loaded); // cache once here
     });
   }
 
@@ -71,27 +72,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
         ],
       ),
     );
-
     if (confirmed != true) return;
-
     await storage.clearExpenses();
     await loadExpenses();
-  }
-
-  double getMonthlySpending() {
-    return statsService.calculate(expenses).monthlyTotal;
-  }
-
-  double getWeeklySpending() {
-    return statsService.calculate(expenses).weeklyTotal;
-  }
-
-  double getTotalSpending() {
-    return statsService.calculate(expenses).total;
-  }
-
-  int getExpenseCount() {
-    return statsService.calculate(expenses).count;
   }
 
   List<DateTime> getLast7Days() {
@@ -102,10 +85,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
     });
   }
 
-  Map<DateTime, double> getDailyTotals() {
-    final days = getLast7Days();
-    final totals = <DateTime, double>{for (final d in days) d: 0.0};
+  List<DateTime> getDaysOfCurrentMonth() {
+    final now = DateTime.now();
+    final lastDay = DateTime(now.year, now.month + 1, 0).day;
+    return List.generate(lastDay, (index) {
+      return DateTime(now.year, now.month, index + 1);
+    });
+  }
 
+  Map<DateTime, double> _buildDailyTotals(List<DateTime> days) {
+    final totals = <DateTime, double>{for (final d in days) d: 0.0};
     for (final expense in expenses) {
       final d = DateTime(
         expense.date.year,
@@ -116,14 +105,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
         totals[d] = totals[d]! + expense.amount;
       }
     }
-
     return totals;
   }
+
+  Map<DateTime, double> getDailyTotals() => _buildDailyTotals(getLast7Days());
+  Map<DateTime, double> getMonthlyDailyTotals() =>
+      _buildDailyTotals(getDaysOfCurrentMonth());
 
   List<FlSpot> getLineSpots() {
     final dailyTotals = getDailyTotals();
     final days = getLast7Days();
-
     return List.generate(days.length, (index) {
       final day = days[index];
       return FlSpot(index.toDouble(), dailyTotals[day] ?? 0.0);
@@ -133,46 +124,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
   double getMaxY() {
     final spots = getLineSpots();
     if (spots.isEmpty) return 100;
-
     final maxValue = spots
         .map((e) => e.y)
         .fold<double>(0, (prev, y) => y > prev ? y : prev);
-
     if (maxValue <= 100) return 100;
     return (maxValue * 1.2).ceilToDouble();
-  }
-
-  List<DateTime> getDaysOfCurrentMonth() {
-    final now = DateTime.now();
-    final lastDay = DateTime(now.year, now.month + 1, 0).day;
-
-    return List.generate(lastDay, (index) {
-      return DateTime(now.year, now.month, index + 1);
-    });
-  }
-
-  Map<DateTime, double> getMonthlyDailyTotals() {
-    final days = getDaysOfCurrentMonth();
-    final totals = <DateTime, double>{for (final d in days) d: 0.0};
-
-    for (final expense in expenses) {
-      final d = DateTime(
-        expense.date.year,
-        expense.date.month,
-        expense.date.day,
-      );
-      if (totals.containsKey(d)) {
-        totals[d] = totals[d]! + expense.amount;
-      }
-    }
-
-    return totals;
   }
 
   List<FlSpot> getMonthlyLineSpots() {
     final dailyTotals = getMonthlyDailyTotals();
     final days = getDaysOfCurrentMonth();
-
     return List.generate(days.length, (index) {
       final day = days[index];
       return FlSpot(index.toDouble(), dailyTotals[day] ?? 0.0);
@@ -182,41 +143,34 @@ class _HistoryScreenState extends State<HistoryScreen> {
   double getMonthlyMaxY() {
     final spots = getMonthlyLineSpots();
     if (spots.isEmpty) return 100;
-
     final maxValue = spots
         .map((e) => e.y)
         .fold<double>(0, (prev, y) => y > prev ? y : prev);
-
     if (maxValue <= 100) return 100;
     return (maxValue * 1.2).ceilToDouble();
   }
 
   Map<String, double> getCategoryTotals() {
     final totals = <String, double>{'needs': 0, 'wants': 0, 'savings': 0};
-
     for (final expense in expenses) {
       totals[expense.category] =
           (totals[expense.category] ?? 0) + expense.amount;
     }
-
     return totals;
   }
 
   List<PieChartSectionData> getPieSections() {
     final totals = getCategoryTotals();
-
     final colors = <String, Color>{
       'needs': Colors.green,
       'wants': Colors.orange,
       'savings': const Color(0xFF4A90E2),
     };
-
     final labels = <String, String>{
       'needs': 'Needs',
       'wants': 'Wants',
       'savings': 'Savings',
     };
-
     return totals.entries
         .where((entry) => entry.value > 0)
         .map(
@@ -275,6 +229,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Widget buildSummarySection() {
+    final stats = _cachedStats;
     return Column(
       children: [
         Row(
@@ -282,7 +237,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             Expanded(
               child: buildSummaryCard(
                 title: 'Monthly',
-                value: '₱${getMonthlySpending().toStringAsFixed(2)}',
+                value: '₱${stats?.monthlyTotal.toStringAsFixed(2) ?? '0.00'}',
                 icon: Icons.calendar_month,
                 color: const Color(0xFF4A90E2),
               ),
@@ -291,7 +246,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             Expanded(
               child: buildSummaryCard(
                 title: 'Weekly',
-                value: '₱${getWeeklySpending().toStringAsFixed(2)}',
+                value: '₱${stats?.weeklyTotal.toStringAsFixed(2) ?? '0.00'}',
                 icon: Icons.date_range,
                 color: const Color(0xFF7E57C2),
               ),
@@ -304,7 +259,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             Expanded(
               child: buildSummaryCard(
                 title: 'Total',
-                value: '₱${getTotalSpending().toStringAsFixed(2)}',
+                value: '₱${stats?.total.toStringAsFixed(2) ?? '0.00'}',
                 icon: Icons.account_balance_wallet,
                 color: const Color(0xFF26A69A),
               ),
@@ -313,7 +268,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             Expanded(
               child: buildSummaryCard(
                 title: 'Expenses',
-                value: '${getExpenseCount()}',
+                value: '${stats?.count ?? 0}',
                 icon: Icons.receipt_long,
                 color: const Color(0xFFFF9800),
               ),
@@ -327,7 +282,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget buildLineChart() {
     final days = getLast7Days();
     final spots = getLineSpots();
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -375,7 +329,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           if (index < 0 || index >= days.length) {
                             return const SizedBox.shrink();
                           }
-
                           final label = DateFormat('MM/dd').format(days[index]);
                           return Padding(
                             padding: const EdgeInsets.only(top: 8),
@@ -455,7 +408,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final days = getDaysOfCurrentMonth();
     final spots = getMonthlyLineSpots();
     final monthLabel = DateFormat('MMMM yyyy').format(DateTime.now());
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -506,7 +458,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                           if (index < 0 || index >= days.length) {
                             return const SizedBox.shrink();
                           }
-
                           return Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Text(
@@ -583,11 +534,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   Widget buildPieChart() {
     final sections = getPieSections();
-
     if (sections.isEmpty) {
       return const SizedBox.shrink();
     }
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -620,42 +569,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 _LegendItem(color: Colors.orange, label: 'Wants'),
                 _LegendItem(color: Color(0xFF4A90E2), label: 'Savings'),
               ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget buildExpensesBox() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'All Expenses',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 360,
-              child: expenses.isEmpty
-                  ? const Center(child: Text('No expenses found'))
-                  : Scrollbar(
-                      thumbVisibility: true,
-                      child: ListView.builder(
-                        itemCount: expenses.length,
-                        itemBuilder: (context, index) {
-                          final expense = expenses[index];
-                          return ExpenseCard(
-                            expense: expense,
-                            onDelete: () => deleteExpense(expense.id),
-                          );
-                        },
-                      ),
-                    ),
             ),
           ],
         ),
@@ -736,7 +649,20 @@ class _HistoryScreenState extends State<HistoryScreen> {
             buildPieChart(),
             const SizedBox(height: 12),
           ],
-          buildExpensesBox(),
+          const Padding(
+            padding: EdgeInsets.only(top: 4, bottom: 8),
+            child: Text(
+              'All Expenses',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+          ),
+          ...expenses.map(
+            (expense) => ExpenseCard(
+              expense: expense,
+              onDelete: () => deleteExpense(expense.id),
+            ),
+          ),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -746,7 +672,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
 class _LegendItem extends StatelessWidget {
   final Color color;
   final String label;
-
   const _LegendItem({required this.color, required this.label});
 
   @override

@@ -6,7 +6,6 @@ import '../widgets/budget_card.dart';
 
 class BudgetScreen extends StatefulWidget {
   final int refreshTick;
-
   const BudgetScreen({super.key, required this.refreshTick});
 
   @override
@@ -16,7 +15,6 @@ class BudgetScreen extends StatefulWidget {
 class _BudgetScreenState extends State<BudgetScreen> {
   final storage = StorageService();
   final statsService = ExpenseStatsService();
-
   double? savedWeekly;
   double? savedMonthly;
   double weeklySpent = 0;
@@ -42,9 +40,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
       final monthly = await storage.getMonthlyBudget();
       final expenses = await storage.getExpenses();
       final stats = statsService.calculate(expenses);
-
       if (!mounted) return;
-
       setState(() {
         savedWeekly = weekly;
         savedMonthly = monthly;
@@ -57,10 +53,27 @@ class _BudgetScreenState extends State<BudgetScreen> {
   }
 
   Future<void> inputBudget(String type) async {
+    // FIX #7: Re-fetch the latest saved value directly from storage right
+    // before opening the dialog. This prevents stale state from pre-populating
+    // the wrong value after navigating back from AdviceScreen where a
+    // recommended budget may have been applied.
+    final latestWeekly = await storage.getWeeklyBudget();
+    final latestMonthly = await storage.getMonthlyBudget();
+
+    // Also sync local state so the BudgetCard UI is up to date
+    if (mounted) {
+      setState(() {
+        savedWeekly = latestWeekly;
+        savedMonthly = latestMonthly;
+      });
+    }
+
+    if (!mounted) return;
+
     final controller = TextEditingController(
       text: type == 'weekly'
-          ? (savedWeekly?.round().toString() ?? '')
-          : (savedMonthly?.round().toString() ?? ''),
+          ? (latestWeekly?.round().toString() ?? '')
+          : (latestMonthly?.round().toString() ?? ''),
     );
 
     final result = await showDialog<String>(
@@ -93,7 +106,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
     );
 
     if (result == null || result.trim().isEmpty) return;
-
     final num = double.tryParse(result);
     if (num == null || num <= 0) {
       if (!mounted) return;
@@ -109,9 +121,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
       } else {
         await storage.setMonthlyBudget(num);
       }
-
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -119,7 +129,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
           ),
         ),
       );
-
       await loadBudgetAndExpenses();
     } catch (err) {
       debugPrint('Save budget error: $err');
@@ -149,13 +158,11 @@ class _BudgetScreenState extends State<BudgetScreen> {
     );
 
     if (confirmed != true) return;
-
     if (type == 'weekly') {
       await storage.clearWeeklyBudget();
     } else {
       await storage.clearMonthlyBudget();
     }
-
     if (!mounted) return;
     await loadBudgetAndExpenses();
   }
@@ -273,7 +280,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
 class _TipRow extends StatelessWidget {
   final String text;
-
   const _TipRow({required this.text});
 
   @override
