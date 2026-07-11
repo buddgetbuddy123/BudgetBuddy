@@ -525,7 +525,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
 
-
   @override
   Widget build(BuildContext context) {
     // Group items by category for display

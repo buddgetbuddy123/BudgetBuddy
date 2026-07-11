@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
+
 import '../models/expense.dart';
-import '../services/ocr_service.dart';
-import '../services/storage_service.dart';
 import '../services/category_classifier_service.dart';
+import '../services/expense_stats_service.dart';
+import '../services/notification_service.dart';
+import '../services/ocr_service.dart';
 import '../services/receipt_parser_service.dart';
-import 'review_screen.dart';
+import '../services/storage_service.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -19,179 +23,264 @@ class _ScanScreenState extends State<ScanScreen> {
   final picker = ImagePicker();
   final storage = StorageService();
   final ocr = OcrService();
-  final classifier = CategoryClassifierService();
   final parser = ReceiptParserService();
+  final statsService = ExpenseStatsService();
+  final notifications = NotificationService();
+
+  final classifier = CategoryClassifierService();
 
   String? imagePath;
-  String extractedText = '';
-  String category = 'needs';
+  String rawOcrText = '';
+
   bool loading = false;
   bool isManualEntry = false;
+
+  String selectedCategory = 'needs';
 
   ClassificationResult? _lastClassification;
 
   final storeController = TextEditingController();
   final amountController = TextEditingController();
 
-  // ─── IMAGE / OCR ─────────────────────────────────────────────────────────
+  static const Map<String, Map<String, dynamic>> _categoryMeta = {
+    'needs': {
+      'label': 'Needs',
+      'description': 'Basic necessity — food, transport, school',
+      'color': Color(0xFF4CAF50),
+      'icon': Icons.fastfood,
+    },
+    'wants': {
+      'label': 'Wants',
+      'description': 'Comfort or lifestyle spending',
+      'color': Color(0xFFFF9800),
+      'icon': Icons.sports_esports,
+    },
+    'savings': {
+      'label': 'Savings',
+      'description': 'Money set aside intentionally',
+      'color': Color(0xFF4A90E2),
+      'icon': Icons.account_balance_wallet,
+    },
+  };
 
   Future<void> pickImage(ImageSource source) async {
-    final file = await picker.pickImage(
-      source: source,
-      imageQuality: 90,
-    );
+    final file = await picker.pickImage(source: source, imageQuality: 90);
+
     if (file == null) return;
+
     setState(() {
       imagePath = file.path;
       isManualEntry = false;
-      extractedText = '';
+      rawOcrText = '';
+      storeController.clear();
+      amountController.clear();
+      selectedCategory = 'needs';
+      _lastClassification = null;
     });
+
     await processImage(file.path);
   }
 
+  // 2nd part
+
+  // ─────────────────────────────────────────────────────────────
+  // OCR
+  // ─────────────────────────────────────────────────────────────
+
   Future<void> processImage(String path) async {
     setState(() => loading = true);
+
     try {
       final text = await ocr.extractText(path);
-
-      if (!mounted) return;
-      setState(() => extractedText = text);
-
-      // Parse the receipt into structured line items
       final parsed = parser.parse(text);
 
-      // If we got more than one line item, go straight to ReviewScreen
-      if (parsed.lineItems.length > 1) {
-        if (!mounted) return;
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ReviewScreen(
-              parsedReceipt: parsed,
-              imagePath: imagePath,
-            ),
-          ),
-        );
-        // After review screen pops, close scan screen too
-        if (!mounted) return;
-        Navigator.pop(context);
-        return;
-      }
+      if (!mounted) return;
 
-      // Single item or fallback — pre-fill the manual form fields
-      _prefillFromParsed(parsed);
+      setState(() {
+        rawOcrText = text;
+
+        // Fill merchant name
+        if (parsed.merchantName.isNotEmpty &&
+            parsed.merchantName != 'Unknown Store') {
+          storeController.text = parsed.merchantName;
+        }
+
+        // Fill amount
+        double? amount;
+
+        if (parsed.grandTotal != null && parsed.grandTotal! > 0) {
+          amount = parsed.grandTotal;
+        } else if (parsed.lineItems.isNotEmpty) {
+          amount = parsed.lineItems.first.amount;
+        }
+
+        if (amount != null) {
+          amountController.text = amount.toStringAsFixed(2);
+        }
+      });
+
+      // Automatically classify after OCR
+      _autoClassify();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('OCR error: $e')),
-      );
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('OCR error: $e')));
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted) {
+        setState(() => loading = false);
+      }
     }
   }
 
-  // Pre-fill store name and amount from parsed receipt (single item case)
-  void _prefillFromParsed(ParsedReceipt parsed) {
-    if (parsed.merchantName.isNotEmpty) {
-      storeController.text = parsed.merchantName;
-    }
-
-    if (parsed.lineItems.isNotEmpty) {
-      amountController.text =
-          parsed.lineItems.first.amount.toStringAsFixed(2);
-    } else if (parsed.grandTotal != null) {
-      amountController.text = parsed.grandTotal!.toStringAsFixed(2);
-    }
-
-    _autoClassify();
-  }
-
-  // ─── CLASSIFICATION ───────────────────────────────────────────────────────
+  //
+  // AI AUTO CLASSIFICATION
+  //
 
   void _autoClassify() {
     final store = storeController.text.trim();
     final amount = double.tryParse(amountController.text.trim()) ?? 0;
+
     if (store.isEmpty && amount == 0) return;
 
-    final result = classifier.classify(
-      storeName: store,
-      amount: amount,
-    );
+    final result = classifier.classify(storeName: store, amount: amount);
 
     if (!mounted) return;
+
     setState(() {
-      category = result.category;
+      selectedCategory = result.category;
       _lastClassification = result;
     });
   }
 
-  void _toggleCategory() {
+  void switchMode(bool manual) {
     setState(() {
-      category = classifier.toggleCategory(category);
-      _lastClassification = ClassificationResult(
-        category: category,
-        reason: 'Manually set by you.',
-        confidence: 'high',
-      );
+      isManualEntry = manual;
+
+      imagePath = null;
+      rawOcrText = '';
+
+      storeController.clear();
+      amountController.clear();
+
+      selectedCategory = 'needs';
+      _lastClassification = null;
     });
   }
 
-  // ─── SAVE (manual / single item) ─────────────────────────────────────────
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // ─── SAVE ─────────────────────────────────────────────────────────────────
 
   Future<void> saveExpense() async {
     final store = storeController.text.trim();
     final amount = double.tryParse(amountController.text.trim());
 
-    if (store.isEmpty || amount == null || amount <= 0) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Enter valid store name and amount'),
-        ),
-      );
+    if (store.isEmpty) {
+      _snack('Please enter a store or item name.');
+      return;
+    }
+    if (amount == null || amount <= 0) {
+      _snack('Please enter a valid amount.');
       return;
     }
 
+    // ── Check budget before saving ─────────────────────────────────────────
+    // Load current spending and budgets to check if this expense would
+    // exceed weekly or monthly limits. Show warning dialog if it would.
+    final expenses = await storage.getExpenses();
+    final stats = statsService.calculate(expenses);
+    final weekly = await storage.getWeeklyBudget();
+    final monthly = await storage.getMonthlyBudget();
+
+    // Date ranges for display in the warning
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    final sunday = monday.add(const Duration(days: 6));
+    final fmt = DateFormat('MMM d');
+    final yr = DateFormat('yyyy').format(monday);
+    final weekRange = monday.month == sunday.month
+        ? '${fmt.format(monday)}–${sunday.day}, $yr'
+        : '${fmt.format(monday)} – ${fmt.format(sunday)}, $yr';
+    final monthRange = DateFormat('MMMM yyyy').format(now);
+
+    if (!mounted) return;
+
+    // Weekly budget warning
+    if (weekly != null && stats.weeklyTotal + amount > weekly) {
+      final proceed = await BudgetWarningDialog.check(
+        context: context,
+        currentSpent: stats.weeklyTotal,
+        budget: weekly,
+        type: 'weekly',
+        dateRange: weekRange,
+        newAmount: amount,
+      );
+      if (!proceed) return;
+    }
+
+    // Monthly budget warning
+    if (monthly != null && stats.monthlyTotal + amount > monthly) {
+      if (!mounted) return;
+      final proceed = await BudgetWarningDialog.check(
+        context: context,
+        currentSpent: stats.monthlyTotal,
+        budget: monthly,
+        type: 'monthly',
+        dateRange: monthRange,
+        newAmount: amount,
+      );
+      if (!proceed) return;
+    }
+
+    // ── Save ───────────────────────────────────────────────────────────────
     final expense = Expense(
       id: const Uuid().v4(),
       store: store,
       amount: amount,
-      category: category,
+      category: selectedCategory,
       date: DateTime.now(),
       imagePath: imagePath,
       isManual: isManualEntry,
     );
 
     await storage.addExpense(expense);
+
+    // Push notification if now exceeding budget after save
+    final updatedExpenses = await storage.getExpenses();
+    final updatedStats = statsService.calculate(updatedExpenses);
+
+    if (weekly != null && updatedStats.weeklyTotal > weekly) {
+      await notifications.showBudgetExceededPush(
+        type: 'weekly',
+        spent: updatedStats.weeklyTotal,
+        budget: weekly,
+        dateRange: weekRange,
+      );
+    }
+    if (monthly != null && updatedStats.monthlyTotal > monthly) {
+      await notifications.showBudgetExceededPush(
+        type: 'monthly',
+        spent: updatedStats.monthlyTotal,
+        budget: monthly,
+        dateRange: monthRange,
+      );
+    }
+
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Saved ₱${amount.toStringAsFixed(2)} under ${_capitalize(category)}',
-        ),
-      ),
+    _snack(
+      'Saved ₱${amount.toStringAsFixed(2)} under '
+      '${_categoryMeta[selectedCategory]!['label']}',
     );
     Navigator.pop(context);
   }
 
-  void switchMode(bool manual) {
-    setState(() {
-      isManualEntry = manual;
-      imagePath = null;
-      extractedText = '';
-      storeController.clear();
-      amountController.clear();
-      category = 'needs';
-      _lastClassification = null;
-    });
-  }
-
-  String _capitalize(String s) =>
-      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
-
   // ─── WIDGETS ─────────────────────────────────────────────────────────────
 
-  Widget buildModeButton({
+  Widget _modeButton({
     required bool selected,
     required IconData icon,
     required String label,
@@ -207,13 +296,6 @@ class _ScanScreenState extends State<ScanScreen> {
             color: selected ? const Color(0xFF4A90E2) : Colors.white,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: const Color(0xFF4A90E2), width: 2),
-            boxShadow: const [
-              BoxShadow(
-                color: Color.fromRGBO(0, 0, 0, 0.06),
-                blurRadius: 6,
-                offset: Offset(0, 2),
-              ),
-            ],
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -238,23 +320,24 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  Widget buildCategoryToggle() {
-    final meta = classifier.categoryMeta(category);
-    final color = Color(meta['color'] as int);
-    final label = meta['label'] as String;
-    final description = meta['description'] as String;
+  // Category selector — three pill buttons, user taps to pick
+  Widget _buildCategoryPicker() {
+    final meta = _categoryMeta[selectedCategory]!;
+    final color = meta['color'] as Color;
 
     final confidence = _lastClassification?.confidence ?? 'low';
+
     final confidenceColor = confidence == 'high'
         ? Colors.green
         : confidence == 'medium'
-            ? Colors.orange
-            : Colors.grey;
+        ? Colors.orange
+        : Colors.grey;
+
     final confidenceLabel = confidence == 'high'
         ? 'Auto-classified'
         : confidence == 'medium'
-            ? 'Likely correct'
-            : 'Tap to verify';
+        ? 'Likely correct'
+        : 'Tap to verify';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -264,180 +347,176 @@ class _ScanScreenState extends State<ScanScreen> {
           style: TextStyle(
             fontSize: 13,
             color: Color(0xFF666666),
-            fontWeight: FontWeight.w500,
+            fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 6),
-        GestureDetector(
-          onTap: _toggleCategory,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: color, width: 2),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(
-                    _iconForCategory(category),
-                    color: color,
-                    size: 22,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: color,
-                        ),
-                      ),
-                      Text(
-                        description,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF666666),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Text(
-                      'Tap to change',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF999999),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: confidenceColor.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        confidenceLabel,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: confidenceColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+
+        const SizedBox(height: 4),
+
+        const Text(
+          'AI automatically suggests a category. Tap another if needed.',
+          style: TextStyle(fontSize: 11, color: Color(0xFF999999)),
         ),
-        if (_lastClassification != null) ...[
-          const SizedBox(height: 6),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.info_outline,
-                  size: 14,
-                  color: Colors.grey.shade500,
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    _lastClassification!.reason,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-        const SizedBox(height: 10),
-        // Quick-tap pills
+
+        const SizedBox(height: 12),
+
         Row(
-          children: ['needs', 'wants', 'savings'].map((cat) {
-            final isActive = cat == category;
-            final catMeta = classifier.categoryMeta(cat);
-            final catColor = Color(catMeta['color'] as int);
+          children: _categoryMeta.entries.map((entry) {
+            final key = entry.key;
+            final item = entry.value;
+
+            final isSelected = selectedCategory == key;
+            final itemColor = item['color'] as Color;
+
             return Expanded(
               child: GestureDetector(
                 onTap: () {
                   setState(() {
-                    category = cat;
+                    selectedCategory = key;
+
                     _lastClassification = ClassificationResult(
-                      category: cat,
-                      reason: 'Manually set by you.',
+                      category: key,
                       confidence: 'high',
+                      reason: 'Manually set by you.',
                     );
                   });
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                   decoration: BoxDecoration(
-                    color: isActive
-                        ? catColor.withValues(alpha: 0.15)
+                    color: isSelected
+                        ? color.withValues(alpha: 0.15)
                         : const Color(0xFFF5F5F5),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: isActive ? catColor : Colors.transparent,
-                      width: 1.5,
+                      color: isSelected ? itemColor : Colors.transparent,
+                      width: 2,
                     ),
                   ),
-                  child: Text(
-                    catMeta['label'] as String,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: isActive
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      color: isActive ? catColor : const Color(0xFF999999),
-                    ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        item['icon'] as IconData,
+                        color: isSelected ? itemColor : Colors.grey,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        item['label'] as String,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: isSelected
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color: isSelected ? itemColor : Colors.grey,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             );
           }).toList(),
         ),
+
+        const SizedBox(height: 14),
+
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(meta['icon'] as IconData, color: color, size: 22),
+
+                  const SizedBox(width: 10),
+
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          meta['label'] as String,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+
+                        Text(
+                          meta['description'] as String,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF666666),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: confidenceColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      confidenceLabel,
+                      style: TextStyle(
+                        color: confidenceColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              if (_lastClassification != null) ...[
+                const SizedBox(height: 12),
+
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 16,
+                      color: Colors.grey.shade600,
+                    ),
+
+                    const SizedBox(width: 6),
+
+                    Expanded(
+                      child: Text(
+                        _lastClassification!.reason,
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
       ],
     );
-  }
-
-  IconData _iconForCategory(String cat) {
-    switch (cat) {
-      case 'needs': return Icons.fastfood;
-      case 'wants': return Icons.sports_esports;
-      case 'savings':
-      default: return Icons.account_balance_wallet;
-    }
   }
 
   @override
@@ -451,21 +530,25 @@ class _ScanScreenState extends State<ScanScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Add Expense')),
+      appBar: AppBar(
+        title: const Text('Add Expense'),
+        backgroundColor: const Color(0xFF4A90E2),
+        foregroundColor: Colors.white,
+      ),
       body: ListView(
-        padding: const EdgeInsets.all(15),
+        padding: const EdgeInsets.all(16),
         children: [
           // Mode toggle
           Row(
             children: [
-              buildModeButton(
+              _modeButton(
                 selected: !isManualEntry,
                 icon: Icons.camera_alt,
                 label: 'Scan Receipt',
                 onTap: () => switchMode(false),
               ),
               const SizedBox(width: 10),
-              buildModeButton(
+              _modeButton(
                 selected: isManualEntry,
                 icon: Icons.edit,
                 label: 'Manual Entry',
@@ -474,41 +557,40 @@ class _ScanScreenState extends State<ScanScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          Text(
-            isManualEntry
-                ? 'Manual Entry mode — fill in details below'
-                : 'Scan mode — take a photo or choose from gallery',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF4A90E2),
-            ),
-          ),
-          const SizedBox(height: 16),
 
-          // Camera / gallery buttons
+          // Scan buttons
           if (!isManualEntry) ...[
             ElevatedButton.icon(
               onPressed: () => pickImage(ImageSource.camera),
               icon: const Icon(Icons.camera_alt),
               label: const Text('Take Photo'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4A90E2),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () => pickImage(ImageSource.gallery),
               icon: const Icon(Icons.photo_library_outlined),
               label: const Text('Choose from Gallery'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
             ),
             const SizedBox(height: 4),
             const Text(
-              'For receipts with multiple items, you\'ll be taken to a review screen.',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+              'Works with printed and handwritten receipts.',
+              style: TextStyle(fontSize: 11, color: Color(0xFF888888)),
               textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 8),
           ],
 
+          // Loading indicator
           if (loading) ...[
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             const Center(child: CircularProgressIndicator()),
             const SizedBox(height: 8),
             const Center(
@@ -517,14 +599,15 @@ class _ScanScreenState extends State<ScanScreen> {
                 style: TextStyle(fontSize: 13, color: Colors.grey),
               ),
             ),
+            const SizedBox(height: 8),
           ],
 
-          if (extractedText.isNotEmpty && !loading) ...[
-            const SizedBox(height: 10),
+          // Raw OCR text (collapsible debug view)
+          if (rawOcrText.isNotEmpty && !loading)
             ExpansionTile(
               title: const Text(
                 'View raw OCR text',
-                style: TextStyle(fontSize: 13, color: Colors.grey),
+                style: TextStyle(fontSize: 13, color: Color(0xFF888888)),
               ),
               children: [
                 Container(
@@ -533,55 +616,76 @@ class _ScanScreenState extends State<ScanScreen> {
                     color: const Color(0xFFF5F5F5),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
-                    extractedText,
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  width: double.infinity,
+                  child: Text(rawOcrText, style: const TextStyle(fontSize: 12)),
                 ),
               ],
             ),
-          ],
 
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
 
-          // Store name
+          // Store / Item name
           TextField(
             controller: storeController,
+            textCapitalization: TextCapitalization.words,
             onChanged: (_) => _autoClassify(),
             decoration: const InputDecoration(
               labelText: 'Store / Item Name',
-              hintText: 'e.g. Canteen, Jollibee, Tuition Fee',
+              hintText: 'e.g. Jollibee, Canteen, Tuition Fee',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.store_outlined),
+              labelStyle: TextStyle(color: Color(0xFF4A90E2)),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: Color(0xFF4A90E2), width: 2),
+              ),
             ),
           ),
           const SizedBox(height: 12),
 
-          // Amount
+          // Amount — peso sign prefix
           TextField(
             controller: amountController,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             onChanged: (_) => _autoClassify(),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+            ],
             decoration: const InputDecoration(
-              labelText: 'Amount (₱)',
+              labelText: 'Amount',
               border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.attach_money),
+              prefixText: '₱ ',
+              prefixStyle: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+              ),
+              labelStyle: TextStyle(color: Color(0xFF4A90E2)),
+              focusedBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: Color(0xFF4A90E2), width: 2),
+              ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
 
-          // Category toggle
-          buildCategoryToggle(),
+          // Category picker — manual selection, no auto-classification
+          _buildCategoryPicker(),
           const SizedBox(height: 24),
 
           // Save button
           ElevatedButton.icon(
             onPressed: saveExpense,
             icon: const Icon(Icons.check_circle_outline),
-            label: const Text('Save Expense'),
+            label: const Text(
+              'Save Expense',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
             style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              backgroundColor: const Color(0xFF4A90E2),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           ),
           const SizedBox(height: 20),

@@ -34,7 +34,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final weekly = await storage.getWeeklyBudget();
     final monthly = await storage.getMonthlyBudget();
 
-
     final stats = statsService.calculate(expenses);
 
     if (!mounted) return;

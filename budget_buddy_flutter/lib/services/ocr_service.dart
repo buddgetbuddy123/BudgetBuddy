@@ -8,7 +8,6 @@ class OcrService {
     final result = await _recognizer.processImage(inputImage);
     return result.text;
   }
-
   void dispose() {
     _recognizer.close();
   }

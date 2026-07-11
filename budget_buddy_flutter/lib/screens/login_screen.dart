@@ -53,8 +53,9 @@ class _LoginScreenState extends State<LoginScreen> {
       final users = await storage.getUsers();
       // FIX #9: Compare hashed password instead of plaintext
       final match = users.where(
-        (u) => u.username.trim() == username &&
-               u.password == _hashPassword(password),
+        (u) =>
+            u.username.trim() == username &&
+            u.password == _hashPassword(password),
       );
       if (match.isNotEmpty) {
         await storage.setCurrentUser(match.first);

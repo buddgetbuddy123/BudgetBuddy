@@ -1,23 +1,19 @@
 // ReceiptParserService
 //
-// Extracts line items from any Philippine receipt exactly as written.
-// No keyword mapping, no SKU expansion, no name translation.
-// Whatever the receipt says is what gets saved — the user can edit
-// item names in the ReviewScreen if needed.
+// Extracts line items from any Philippine receipt exactly as written by MLKit OCR.
 //
-// What this parser does:
-//   1. Detects the merchant/store name from the receipt header
-//   2. Extracts each line item with its name and amount exactly as printed
-//   3. Handles two common Philippine receipt formats:
-//      Format A — item name + price on same line (Jollibee, SM, Mercury Drug)
-//      Format B — item name on one line, qty x price on next line (sari-sari, Easy Day)
-//   4. Finds the correct grand total (ignoring CASH and CHANGE lines)
-//   5. Extracts the date if present
+// Design philosophy (simplified):
+//   - Find the merchant name from the first meaningful header line
+//   - Find every line that has a peso amount at the end → that is an item
+//   - Handle the two-line format (name on one line, price on next)
+//   - Ignore CASH and CHANGE lines so the total is correct
+//   - Return items exactly as OCR read them — no transformation
+//   - The user fixes anything wrong in ReviewScreen
 //
-// What this parser does NOT do:
-//   - No keyword-to-display-name mapping
-//   - No SKU abbreviation expansion
-//   - No category classification (that's CategoryClassifierService's job)
+// Why simplified:
+//   Philippine receipts have no standard format. Complex regex-based parsing
+//   breaks on anything unexpected. A simple "find lines with amounts" approach
+//   is more reliable across all receipt types and easier to maintain.
 
 class ReceiptLineItem {
   final String name;
@@ -29,26 +25,13 @@ class ReceiptLineItem {
     required this.amount,
     this.quantity = 1,
   });
-
-  @override
-  String toString() =>
-      'ReceiptLineItem(name: $name, amount: $amount, qty: $quantity)';
 }
 
 class ParsedReceipt {
-  /// Detected merchant / store name from receipt header
   final String merchantName;
-
-  /// All extracted line items, names exactly as printed on the receipt
   final List<ReceiptLineItem> lineItems;
-
-  /// The grand total found on the receipt (TOTAL line, not CASH or CHANGE)
   final double? grandTotal;
-
-  /// Date string found on receipt (raw, as printed)
   final String? dateString;
-
-  /// Raw OCR text — shown in the collapsible debug view in ScanScreen
   final String rawText;
 
   const ParsedReceipt({
@@ -62,277 +45,148 @@ class ParsedReceipt {
 
 class ReceiptParserService {
 
-  // ─── LINES TO ALWAYS SKIP ────────────────────────────────────────────────
-  // These are never real purchased items — they are receipt metadata,
-  // payment info, tax breakdowns, or promotional text.
-
-  static const List<String> _skipPatterns = [
-    // Payment lines — must skip to avoid grabbing CHANGE as an item
-    'change', 'cash', 'cash tendered', 'amount tendered', 'amount paid',
-    'cash in', 'tendered',
-    // Tax / VAT breakdown
-    'vatable', 'vat exempt', 'vat amount', 'vat_amt', 'zero-rated',
-    'zero rated', 'withholding', 'witholding',
-    // Totals and subtotals
-    'total', 'subtotal', 'sub total', 'sub-total',
-    'amount due', 'total due', 'total amount', 'total sales',
-    'grand total',
-    // Discounts and fees
-    'less discount', 'senior citizen', 'pwd discount',
-    'loyalty', 'points',
-    // Receipt metadata
-    'invoice', 'receipt', 'or number', 'si #', 'trans #', 'terminal',
-    'cashier', 'staff', 'store#', 'store #', 'min #', 'sn#',
-    'tin', 'bir', 'ptu', 'accr', 'series',
-    'date issued', 'valid until', 'date',
-    // Address / contact
-    'address', 'tel', 'telefax', 'website', 'floor', 'city',
-    'philippines', 'corporation', 'inc.', 'owned', 'operated',
-    // Closing messages
-    'thank you', 'thanks', 'please come again', 'have a nice day',
-    'bawat visit', 'sulit', 'nothing follows', 'end of receipt',
-    'this document', 'not valid', 'claim', 'serves as',
-    'copy for', 'duplicate',
-    // Promotions
-    'buy p', 'win', 'travel rewards', 'dti fair', 'permit number',
-    'saan man', 'kapitbiyahe', 'facebook',
-    // Separators
-    '---', '===', '***', '___',
+  // Lines that are never items — skip these entirely
+  static const List<String> _skipWords = [
+    'change', 'cash', 'tendered', 'total', 'subtotal', 'sub total',
+    'amount due', 'vat', 'tax', 'discount', 'loyalty',
+    'cashier', 'staff', 'terminal', 'invoice', 'receipt',
+    'tin:', 'bir', 'ptu', 'accr', 'series',
+    'thank you', 'bawat', 'sulit', 'nothing follows',
+    'this document', 'not valid', 'copy for',
+    'address', 'tel:', 'philippines', 'corporation',
+    '---', '===', '***',
   ];
 
   // ─── PUBLIC API ───────────────────────────────────────────────────────────
 
-  /// Parse raw OCR text into a [ParsedReceipt] with line items exactly
-  /// as written on the receipt.
   ParsedReceipt parse(String rawText) {
-    final lines = _cleanLines(rawText);
-
-    final merchantName = _extractMerchant(lines);
-    final dateString = _extractDate(rawText);
-    final grandTotal = _extractGrandTotal(rawText);
-    final lineItems = _extractLineItems(lines);
+    final lines = rawText
+        .split('\n')
+        .map((l) => l.replaceAll('\r', '').trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
 
     return ParsedReceipt(
-      merchantName: merchantName,
-      lineItems: lineItems,
-      grandTotal: grandTotal,
-      dateString: dateString,
+      merchantName: _findMerchant(lines),
+      lineItems: _findItems(lines),
+      grandTotal: _findTotal(rawText),
+      dateString: _findDate(rawText),
       rawText: rawText,
     );
   }
 
-  // ─── MERCHANT NAME ────────────────────────────────────────────────────────
+  // ─── MERCHANT ─────────────────────────────────────────────────────────────
 
-  String _extractMerchant(List<String> lines) {
-    // The merchant name is almost always in the first few lines of the receipt.
-    // We take the first line that:
-    //   - is not empty
-    //   - is not too short (< 3 chars) or too long (> 60 chars)
-    //   - does not start with a number (avoids TIN, SN, reference numbers)
-    //   - does not look like an address or metadata
+  String _findMerchant(List<String> lines) {
     for (final line in lines.take(8)) {
-      final cleaned = line.trim();
-      if (cleaned.isEmpty) continue;
-      if (cleaned.length < 3 || cleaned.length > 60) continue;
-      if (RegExp(r'^\d').hasMatch(cleaned)) continue;
-
-      final lower = cleaned.toLowerCase();
-      // Skip obvious non-merchant lines
-      if (lower.contains('philippines') ||
-          lower.contains('corporation') ||
+      if (line.length < 3 || line.length > 60) continue;
+      if (RegExp(r'^\d').hasMatch(line)) continue;
+      final lower = line.toLowerCase();
+      if (_skipWords.any((w) => lower.contains(w))) continue;
+      if (lower.contains('owned') ||
           lower.contains('operated') ||
-          lower.contains('owned') ||
           lower.contains('vatregtin') ||
-          lower.contains('vatreg') ||
-          lower.contains('tel') ||
-          lower.contains('address') ||
-          lower.contains('floor') ||
+          lower.contains('vat reg') ||
+          lower.contains('tel #') ||
           lower.contains('cor.') ||
-          lower.contains('street') ||
           lower.contains('st.,') ||
-          lower.contains('ave') ||
-          lower.contains('city')) { continue; }
-
-      return _toTitleCase(cleaned);
+          lower.contains('ave.,') ||
+          lower.contains('city,') ||
+          lower.contains('philippines')) { continue; }
+      return _titleCase(line);
     }
     return 'Unknown Store';
   }
 
-  // ─── DATE EXTRACTION ──────────────────────────────────────────────────────
+  // ─── ITEM EXTRACTION ─────────────────────────────────────────────────────
+  //
+  // Simple rule:
+  //   Any line ending with a peso amount = an item line.
+  //   The item name is everything before the amount.
+  //   Exception: if the name is empty, use the previous line as the name
+  //   (handles two-line format: name on line N, price on line N+1).
 
-  String? _extractDate(String text) {
-    // MM/DD/YYYY or MM-DD-YYYY
-    final mmddyyyy = RegExp(r'\b(\d{2}[\/\-]\d{2}[\/\-]\d{4})\b');
-    // Month name: "March 19, 2026" or "19 March 2026"
-    final monthName = RegExp(
-      r'\b(\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|'
-      r'May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|'
-      r'Nov(?:ember)?|Dec(?:ember)?)\s+\d{4})\b',
-      caseSensitive: false,
-    );
-    final m1 = mmddyyyy.firstMatch(text);
-    if (m1 != null) return m1.group(1);
-    final m2 = monthName.firstMatch(text);
-    if (m2 != null) return m2.group(1);
-    return null;
-  }
-
-  // ─── GRAND TOTAL ─────────────────────────────────────────────────────────
-
-  double? _extractGrandTotal(String text) {
-    // IMPORTANT: Skip CASH and CHANGE lines entirely.
-    // e.g. 7-Eleven: Total (3) 143.00 / CASH 650.00 / CHANGE 507.00
-    // We must return 143.00, not 507.00 or 650.00.
-
-    bool isCashOrChangeLine(String lower) {
-      final t = lower.trimLeft();
-      return t.startsWith('change') ||
-          t.startsWith('cash') ||
-          t.contains('cash tendered') ||
-          t.contains('amount tendered') ||
-          t.contains('amount paid') ||
-          t.contains('cash in');
-    }
-
-    final lines = text.split('\n');
-
-    // 1. Explicit total patterns — checked line by line, skipping cash/change
-    final totalPatterns = [
-      // "Total (3) 143.00" — 7-Eleven format
-      RegExp(r'total\s*\(\d+\)\s+([\d,]+\.\d{2})', caseSensitive: false),
-      // "AMOUNT DUE:P 158.00" — BIR invoice format
-      RegExp(r'amount\s+due[:\s]*[Pp]?\s*([\d,]+\.\d{2})', caseSensitive: false),
-      // "Total Amount : 3,200.00"
-      RegExp(r'total\s+amount[:\s]+([\d,]+\.\d{2})', caseSensitive: false),
-      // "Total : 350.00" or "Total  350.00"
-      RegExp(r'^total[:\s]+([\d,]+\.\d{2})', caseSensitive: false),
-      // "Total Sales : 141.06"
-      RegExp(r'total\s+sales[:\s]+([\d,]+\.\d{2})', caseSensitive: false),
-      // "Total Due : 158.00"
-      RegExp(r'total\s+due[:\s]+([\d,]+\.\d{2})', caseSensitive: false),
-    ];
-
-    for (final line in lines) {
-      final lower = line.toLowerCase();
-      if (isCashOrChangeLine(lower)) continue;
-      for (final pattern in totalPatterns) {
-        final match = pattern.firstMatch(line.trim());
-        if (match != null) {
-          final val = double.tryParse(match.group(1)!.replaceAll(',', ''));
-          if (val != null && val > 0) return val;
-        }
-      }
-    }
-
-    // 2. Any line with "total" — grab the last number, skip cash/change
-    for (final line in lines) {
-      final lower = line.toLowerCase();
-      if (isCashOrChangeLine(lower)) continue;
-      if (lower.contains('total') &&
-          !lower.contains('vat') &&
-          !lower.contains('zero') &&
-          !lower.contains('exempt') &&
-          !lower.contains('item')) {
-        final amounts = RegExp(r'([\d,]+\.\d{2})')
-            .allMatches(line)
-            .map((m) => double.tryParse(m.group(1)!.replaceAll(',', '')) ?? 0.0)
-            .where((v) => v > 0)
-            .toList();
-        if (amounts.isNotEmpty) return amounts.last;
-      }
-    }
-
-    // 3. Last resort: largest number in the receipt, skipping cash/change lines
-    final allAmounts = <double>[];
-    for (final line in lines) {
-      if (isCashOrChangeLine(line.toLowerCase())) continue;
-      RegExp(r'\b([\d,]+\.\d{2})\b').allMatches(line).forEach((m) {
-        final v = double.tryParse(m.group(1)!.replaceAll(',', '')) ?? 0.0;
-        if (v >= 1.0) allAmounts.add(v);
-      });
-    }
-    allAmounts.sort((a, b) => b.compareTo(a));
-    return allAmounts.isNotEmpty ? allAmounts.first : null;
-  }
-
-
-  List<ReceiptLineItem> _extractLineItems(List<String> lines) {
+  List<ReceiptLineItem> _findItems(List<String> lines) {
     final items = <ReceiptLineItem>[];
 
-    // Price at end of line (with optional V flag for VATable)
-    final amountAtEnd = RegExp(r'[\s\t]+([\d,]+\.\d{2})\s*[Vv]?\s*$');
+    // Amount at end of line, with optional V (VATable) flag and quantity
+    final amountEnd = RegExp(r'([\d,]+\.\d{2})\s*[Vv]?\s*$');
 
-    // Format B qty line:
-    // "3 EA X 16.00 48.00 V" — qty, optional unit label, X, unit price, [total]
-    // "45.00 X 2 90.00 V"    — unit price, X, qty, [total]  (reversed)
-    final qtyFormat1 = RegExp(
-      r'^(\d+)\s*(?:EA|ea|Ea|PC|pc|PCS|pcs|x)?\s*[xX]\s*([\d,]+\.\d{2})',
-    );
-    // Reversed: unit price X qty (7-Eleven style: "45.00 X 2")
-    final qtyFormat2 = RegExp(
-      r'^([\d,]+\.\d{2})\s*[xX]\s*(\d+)',
+    // Qty x price pattern on a line (e.g. "45.00 X 2" or "3 EA X 16.00")
+    final qtyLine = RegExp(
+      r'(?:([\d,]+\.\d{2})\s*[xX]\s*(\d+)|(\d+)\s*(?:EA|ea|PC|pc)?\s*[xX]\s*([\d,]+\.\d{2}))',
     );
 
-    String? pendingName; // item name from previous line (Format B)
     bool pastHeader = false;
+    String? pendingName;
 
-    for (int i = 0; i < lines.length; i++) {
-      final line = lines[i];
-      final lower = line.toLowerCase().trim();
+    for (final line in lines) {
+      final lower = line.toLowerCase();
 
-      if (lower.isEmpty) continue;
-
-      // Skip until we are past the receipt header
-      if (!pastHeader) {
-        if (_looksLikeItemsStart(lower)) {
-          pastHeader = true;
-        } else {
-          continue;
-        }
-      }
-
-      // Stop at total / summary section
-      if (_isTotalLine(lower)) {
+      // Stop at total/payment section — this must run BEFORE _shouldSkip,
+      // and must use break (not continue), otherwise CASH/CHANGE lines that
+      // also match _skipWords would just get skipped and the loop would
+      // keep reading further lines as if they were still items.
+      if (_isTotalOrPaymentLine(lower)) {
         pendingName = null;
         break;
       }
 
-      // Skip noise lines
-      if (_shouldSkipLine(lower)) {
-        pendingName = null;
-        continue;
-      }
-
-      // ── Try Format B variant 1: "3 EA X 16.00 [48.00 V]" ─────────────────
-      final qty1Match = qtyFormat1.firstMatch(line.trim());
-      if (qty1Match != null) {
-        final qty = int.tryParse(qty1Match.group(1)!) ?? 1;
-        final unitPrice =
-            double.tryParse(qty1Match.group(2)!.replaceAll(',', '')) ?? 0;
-        if (unitPrice > 0) {
-          final name = (pendingName?.isNotEmpty == true)
-              ? pendingName!
-              : _extractNameBeforeQty(line, qty1Match.end);
-          if (name.isNotEmpty) {
-            items.add(ReceiptLineItem(
-              name: name,
-              amount: unitPrice * qty,
-              quantity: qty,
-            ));
-          }
+      // Skip metadata and noise (header info, tax lines, etc.)
+      // Safety check: if this line is somehow a cash/change line that
+      // _isTotalOrPaymentLine missed (e.g. unexpected OCR spacing),
+      // break here too instead of silently skipping and continuing.
+      // IMPORTANT: use word-boundary regex, not .contains('cash') —
+      // .contains('cash') incorrectly matches "Cashier", which would
+      // wrongly stop the loop on the cashier name line and discard
+      // every item on the receipt.
+      if (_shouldSkip(lower)) {
+        final isCashWord = RegExp(r'\bcash\b').hasMatch(lower) &&
+            !lower.contains('cashier');
+        final isChangeWord = RegExp(r'\bchange\b').hasMatch(lower);
+        final isTotalWord = RegExp(r'\btotal\b').hasMatch(lower);
+        if (isCashWord || isChangeWord || isTotalWord) {
+          pendingName = null;
+          break;
         }
         pendingName = null;
         continue;
       }
 
-      // ── Try Format B variant 2: "45.00 X 2 [90.00 V]" ────────────────────
-      final qty2Match = qtyFormat2.firstMatch(line.trim());
-      if (qty2Match != null) {
-        final unitPrice =
-            double.tryParse(qty2Match.group(1)!.replaceAll(',', '')) ?? 0;
-        final qty = int.tryParse(qty2Match.group(2)!) ?? 1;
+      // Start collecting items once we see a line with an amount.
+      // IMPORTANT: pendingName tracking (further below) must still run
+      // even while !pastHeader, otherwise the very first item's name line
+      // — which appears right before the line that triggers pastHeader —
+      // gets skipped via `continue` here and is lost, causing the first
+      // item to fall back to the generic "Item" placeholder name.
+      if (!pastHeader && amountEnd.hasMatch(line)) {
+        pastHeader = true;
+      }
+
+      // Try qty x price format — only treat as an item once pastHeader,
+      // otherwise a header line that coincidentally matches this pattern
+      // (rare, but possible) could leak in as a fake item.
+      final qtyMatch = qtyLine.firstMatch(line);
+      if (qtyMatch != null && pastHeader) {
+        double unitPrice = 0;
+        int qty = 1;
+
+        if (qtyMatch.group(1) != null) {
+          // "45.00 X 2" format
+          unitPrice = double.tryParse(
+                qtyMatch.group(1)!.replaceAll(',', ''),
+              ) ?? 0;
+          qty = int.tryParse(qtyMatch.group(2) ?? '1') ?? 1;
+        } else {
+          // "3 EA X 16.00" format
+          qty = int.tryParse(qtyMatch.group(3) ?? '1') ?? 1;
+          unitPrice = double.tryParse(
+                qtyMatch.group(4)!.replaceAll(',', ''),
+              ) ?? 0;
+        }
+
         if (unitPrice > 0) {
-          final name = (pendingName?.isNotEmpty == true)
+          final name = pendingName?.isNotEmpty == true
               ? pendingName!
               : 'Item';
           items.add(ReceiptLineItem(
@@ -345,9 +199,9 @@ class ReceiptParserService {
         continue;
       }
 
-      // ── Try Format A: item name + price on same line ───────────────────────
-      final amountMatch = amountAtEnd.firstMatch(line);
-      if (amountMatch != null) {
+      // Standard: name + amount on same line — same pastHeader guard
+      final amountMatch = amountEnd.firstMatch(line);
+      if (amountMatch != null && pastHeader) {
         final amount = double.tryParse(
           amountMatch.group(1)!.replaceAll(',', ''),
         );
@@ -357,34 +211,28 @@ class ReceiptParserService {
         }
 
         // Name = everything before the amount
-        final rawName = line.substring(0, amountMatch.start).trim();
+        final name = line
+            .substring(0, amountMatch.start)
+            .trim();
 
-        // Skip if name is empty, too short, or just a number
-        if (rawName.isEmpty ||
-            rawName.length < 2 ||
-            RegExp(r'^\d+$').hasMatch(rawName)) {
-          pendingName = null;
-          continue;
+        if (name.isNotEmpty &&
+            name.length >= 2 &&
+            !RegExp(r'^\d+$').hasMatch(name) &&
+            !_shouldSkip(name.toLowerCase())) {
+          items.add(ReceiptLineItem(name: name, amount: amount));
+        } else if (pendingName?.isNotEmpty == true) {
+          // Name was on previous line
+          items.add(ReceiptLineItem(name: pendingName!, amount: amount));
         }
-
-        if (_shouldSkipLine(rawName.toLowerCase())) {
-          pendingName = null;
-          continue;
-        }
-
-        items.add(ReceiptLineItem(name: rawName, amount: amount));
         pendingName = null;
         continue;
       }
 
-      // ── No price found on this line ────────────────────────────────────────
-      // Could be a Format B item name line — store as pending.
-      // Only store if it looks like a product name (not a barcode or separator).
-      final trimmed = line.trim();
-      if (trimmed.length >= 3 &&
-          !RegExp(r'^[\d\s\-\=\*\.]+$').hasMatch(trimmed) &&
-          !_shouldSkipLine(lower)) {
-        pendingName = trimmed;
+      // No amount — store as potential pending name for next line
+      if (line.length >= 3 &&
+          !RegExp(r'^[\d\s\-=\*.]+$').hasMatch(line) &&
+          !_shouldSkip(lower)) {
+        pendingName = line;
       } else {
         pendingName = null;
       }
@@ -393,66 +241,185 @@ class ReceiptParserService {
     return items;
   }
 
-  // ─── HELPERS ─────────────────────────────────────────────────────────────
+  // ─── GRAND TOTAL ─────────────────────────────────────────────────────────
+  //
+  // CRITICAL: thermal receipt OCR frequently splits a label and its value
+  // onto SEPARATE lines because of how the original receipt is column-
+  // aligned (label left, amount right). For example:
+  //
+  //   TOTAL DUE
+  //   599.00
+  //   CASH
+  //   600.00
+  //   CHANGE
+  //   1.00
+  //
+  // A line-by-line check that only looks at the CURRENT line for "cash" or
+  // "change" will miss this entirely, because "600.00" by itself contains
+  // no such word — the word is on the PREVIOUS line. This was the actual
+  // bug: CASH's value (600.00) was being picked up as the total because
+  // the exclusion never looked backward to the label line above it.
+  //
+  // Fix: build a list of (label, value) pairs by pairing each numeric-only
+  // line with the nearest preceding non-numeric line, THEN apply the
+  // cash/change exclusion against the PAIRED label, not just the value line.
 
-  /// Returns true when we've likely passed the receipt header and
-  /// reached the item listing section.
-  bool _looksLikeItemsStart(String lower) {
-    // A line ending with a peso amount is almost certainly an item line
-    if (RegExp(r'[\d,]+\.\d{2}\s*[Vv]?\s*$').hasMatch(lower)) return true;
-    // qty x price pattern
-    if (RegExp(r'\d+\s*[xX]\s*[\d,]+\.\d{2}').hasMatch(lower)) return true;
-    return false;
-  }
-
-  /// Returns true if the line is a total/summary line — stop parsing items here.
-  bool _isTotalLine(String lower) {
-    return lower.trimLeft().startsWith('total') ||
-        lower.trimLeft().startsWith('subtotal') ||
-        lower.trimLeft().startsWith('sub total') ||
-        lower.contains('amount due') ||
-        lower.contains('total due') ||
-        lower.contains('item(s)') ||
-        lower.contains('items)');
-  }
-
-  /// Returns true if this line should be excluded from item extraction.
-  bool _shouldSkipLine(String lower) {
-    for (final pattern in _skipPatterns) {
-      if (lower.contains(pattern)) return true;
-    }
-    // Lines that are purely numbers/barcodes
-    if (RegExp(r'^\d{4,}$').hasMatch(lower.replaceAll(' ', ''))) return true;
-    // Pure separator lines
-    if (RegExp(r'^[=\-_\*\.\/\\]+$').hasMatch(lower)) return true;
-    return false;
-  }
-
-  /// Extracts a trailing name after the qty pattern end index.
-  /// Used when the item name is on the same line after the qty block.
-  String _extractNameBeforeQty(String line, int afterQtyIndex) {
-    if (afterQtyIndex >= line.length) return '';
-    // Remove trailing amount and V flag
-    return line
-        .substring(afterQtyIndex)
-        .replaceAll(RegExp(r'[\d,]+\.\d{2}\s*[Vv]?\s*$'), '')
-        .trim();
-  }
-
-  List<String> _cleanLines(String text) {
-    return text
+  double? _findTotal(String text) {
+    final rawLines = text
         .split('\n')
-        .map((l) => l
-            .replaceAll('\r', '')
-            .replaceAll('\t', '  ')
-            .replaceAll(RegExp(r' {3,}'), '  ')
-            .trim())
+        .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
         .toList();
+
+    bool isCashOrChangeLabel(String lower) {
+      final t = lower.trim();
+      return t == 'cash' ||
+          t.startsWith('cash') ||
+          t == 'change' ||
+          t.startsWith('change') ||
+          t.contains('tendered') ||
+          t.contains('cash in') ||
+          t.contains('amount paid');
+    }
+
+    bool isTotalLabel(String lower) {
+      final t = lower.trim();
+      return t.startsWith('total') ||
+          t.contains('total due') ||
+          t.contains('total amount') ||
+          t.contains('amount due') ||
+          t.contains('total sales');
+    }
+
+    final pureNumber = RegExp(r'^[\d,]+\.\d{2}$');
+
+    // Step 1: build (label, value) pairs — handles BOTH same-line and
+    // split-line formats. lastLabel tracks the most recent non-numeric
+    // line so a numeric-only line can be matched back to its label.
+    String lastLabel = '';
+    final pairs = <MapEntry<String, double>>[];
+
+    for (final line in rawLines) {
+      final lower = line.toLowerCase();
+
+      if (pureNumber.hasMatch(line)) {
+        // This line is JUST a number — pair it with the last seen label
+        final v = double.tryParse(line.replaceAll(',', ''));
+        if (v != null && v > 0) {
+          pairs.add(MapEntry(lastLabel, v));
+        }
+        continue;
+      }
+
+      // This line has text — check if it also has a trailing amount
+      // (same-line format, e.g. "TOTAL DUE    599.00")
+      final sameLine = RegExp(r'([\d,]+\.\d{2})\s*[Vv]?\s*$').firstMatch(line);
+      if (sameLine != null) {
+        final v = double.tryParse(sameLine.group(1)!.replaceAll(',', ''));
+        if (v != null && v > 0) {
+          pairs.add(MapEntry(lower, v));
+        }
+      }
+
+      // Always update lastLabel to this line's text, for the NEXT
+      // numeric-only line to pair against
+      lastLabel = lower;
+    }
+
+    // Step 2: search the paired (label, value) list for the total,
+    // explicitly excluding anything paired with a cash/change label
+    for (final pair in pairs) {
+      if (isCashOrChangeLabel(pair.key)) continue;
+      if (isTotalLabel(pair.key)) return pair.value;
+    }
+
+    // Step 3: any pair whose label contains "total" but isn't VAT-related
+    for (final pair in pairs) {
+      if (isCashOrChangeLabel(pair.key)) continue;
+      if (pair.key.contains('total') &&
+          !pair.key.contains('vat') &&
+          !pair.key.contains('zero') &&
+          !pair.key.contains('exempt') &&
+          !pair.key.contains('item')) {
+        return pair.value;
+      }
+    }
+
+    // Step 4: last resort — largest value among all pairs, excluding
+    // anything paired with a cash/change label
+    double? largest;
+    for (final pair in pairs) {
+      if (isCashOrChangeLabel(pair.key)) continue;
+      if (largest == null || pair.value > largest) {
+        largest = pair.value;
+      }
+    }
+    if (largest != null) return largest;
+
+    // Step 5: absolute fallback — if pairing somehow found nothing
+    // (e.g. unusual receipt layout), fall back to scanning raw text
+    // for ANY total-labelled amount on a single line.
+    final fallbackPatterns = [
+      RegExp(r'total\s*\(\d+\)\s+([\d,]+\.\d{2})', caseSensitive: false),
+      RegExp(r'total\s+due[:\s]+([\d,]+\.\d{2})', caseSensitive: false),
+      RegExp(r'amount\s+due[:\s]*[Pp]?\s*([\d,]+\.\d{2})', caseSensitive: false),
+      RegExp(r'total\s+amount[:\s]+([\d,]+\.\d{2})', caseSensitive: false),
+    ];
+    for (final line in rawLines) {
+      final lower = line.toLowerCase();
+      if (isCashOrChangeLabel(lower)) continue;
+      for (final p in fallbackPatterns) {
+        final m = p.firstMatch(line);
+        if (m != null) {
+          final v = double.tryParse(m.group(1)!.replaceAll(',', ''));
+          if (v != null && v > 0) return v;
+        }
+      }
+    }
+
+    return null;
   }
 
-  String _toTitleCase(String text) {
-    if (text.isEmpty) return text;
+  // ─── DATE ────────────────────────────────────────────────────────────────
+
+  String? _findDate(String text) {
+    final m1 = RegExp(r'\b(\d{2}[\/\-]\d{2}[\/\-]\d{4})\b').firstMatch(text);
+    if (m1 != null) return m1.group(1);
+    final m2 = RegExp(
+      r'\b(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{4})\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    return m2?.group(1);
+  }
+
+  // ─── HELPERS ─────────────────────────────────────────────────────────────
+
+  bool _isTotalOrPaymentLine(String lower) {
+    final t = lower.trimLeft();
+    // CRITICAL: must NOT use t.startsWith('cash') alone — "Cashier" also
+    // starts with "cash" and would incorrectly trigger a stop here,
+    // silently discarding the entire item list. Use word-boundary checks
+    // so "cash" only matches as a whole word or "cash:"/"cash " etc,
+    // never as a prefix of a longer word like "cashier".
+    final isCashLine = RegExp(r'^cash\b').hasMatch(t) &&
+        !t.startsWith('cashier');
+    final isChangeLine = RegExp(r'^change\b').hasMatch(t);
+    return t.startsWith('total') ||
+        t.startsWith('subtotal') ||
+        t.startsWith('sub total') ||
+        isChangeLine ||
+        isCashLine ||
+        t.contains('amount due') ||
+        t.contains('item(s)');
+  }
+
+  bool _shouldSkip(String lower) {
+    return _skipWords.any((w) => lower.contains(w)) ||
+        RegExp(r'^\d{5,}$').hasMatch(lower.replaceAll(' ', '')) ||
+        RegExp(r'^[=\-_\*\.\/\\]{3,}$').hasMatch(lower);
+  }
+
+  String _titleCase(String text) {
     return text
         .toLowerCase()
         .split(' ')

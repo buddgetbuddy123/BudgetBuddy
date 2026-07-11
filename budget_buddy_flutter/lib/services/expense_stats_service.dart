@@ -79,3 +79,4 @@ class ExpenseStatsService {
     return projectedDailyAverage(expenses) * 30;
   }
 }
+
