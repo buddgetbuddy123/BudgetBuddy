@@ -537,6 +537,39 @@ class ReceiptParserService {
       lastLabel = lower;
     }
 
+    // Step 1.5: on some thermal POS receipts, ML Kit reads the printed
+    // field labels and their values as two separate blocks (grouped by
+    // physical column rather than row), so a numeric-only line ends up
+    // paired with whatever text happened to precede it in OCR order —
+    // NOT the label it's actually printed next to. That can attach the
+    // real total's own label ("Total Amount") to an unrelated value
+    // (e.g. the VAT amount), while the true total sits further down,
+    // orphaned from any label at all.
+    //
+    // The real total on these receipts is usually echoed several times
+    // (e.g. once as "Total Sales", again folded into the cash/change
+    // math) — a value repeating 3+ times is a much safer signal here
+    // than trusting a label/value pairing that might be scrambled, so
+    // check for that BEFORE trusting Step 2's label match.
+    final frequency = <double, int>{};
+    for (final pair in pairs) {
+      if (isCashOrChangeLabel(pair.key)) continue;
+      frequency[pair.value] = (frequency[pair.value] ?? 0) + 1;
+    }
+    double? mostRepeated;
+    int bestCount = 0;
+    for (final entry in frequency.entries) {
+      if (entry.value > bestCount ||
+          (entry.value == bestCount &&
+              (mostRepeated == null || entry.key > mostRepeated))) {
+        bestCount = entry.value;
+        mostRepeated = entry.key;
+      }
+    }
+    if (mostRepeated != null && bestCount >= 3) {
+      return mostRepeated;
+    }
+
     // Step 2: search the paired (label, value) list for the total,
     // explicitly excluding anything paired with a cash/change label
     for (final pair in pairs) {

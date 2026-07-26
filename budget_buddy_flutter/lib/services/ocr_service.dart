@@ -45,6 +45,14 @@ class OcrService {
   final OcrCleanupService _cleanup = OcrCleanupService();
   final CloudOcrService _cloudOcr = CloudOcrService();
 
+  // Tracks in-flight calls to the on-device recognizer so dispose() can
+  // wait for them to finish instead of ripping the recognizer out from
+  // under a call that's still running — closing it mid-call was the
+  // actual cause of the crash when the screen was backed out of during a
+  // scan.
+  int _activeRecognizerCalls = 0;
+  bool _disposeRequested = false;
+
   /// Engine used by the most recent [extractText] / [extractDetailed]
   /// call. Handy for callers still using the legacy String-only API that
   /// want to show "read online" vs "read offline" without switching over.
@@ -119,7 +127,7 @@ class OcrService {
         if (!await file.exists()) continue;
 
         final inputImage = InputImage.fromFilePath(path);
-        final recognizedText = await _recognizer.processImage(inputImage);
+        final recognizedText = await _runRecognizer(inputImage);
 
         final buffer = StringBuffer();
 
@@ -145,7 +153,7 @@ class OcrService {
       // Fallback if blocks were empty
       if (finalText.isEmpty) {
         final inputImage = InputImage.fromFilePath(processedPath);
-        final recognizedText = await _recognizer.processImage(inputImage);
+        final recognizedText = await _runRecognizer(inputImage);
 
         finalText = recognizedText.text.trim();
       }
@@ -159,8 +167,36 @@ class OcrService {
     }
   }
 
-  void dispose() {
+  /// Wraps every native call to the on-device recognizer with in-flight
+  /// tracking, so [dispose] knows to wait rather than close the recognizer
+  /// while a call is still running against it.
+  Future<RecognizedText> _runRecognizer(InputImage inputImage) async {
+    if (_disposeRequested) {
+      throw Exception('OCR cancelled: screen was closed.');
+    }
+    _activeRecognizerCalls++;
+    try {
+      return await _recognizer.processImage(inputImage);
+    } finally {
+      _activeRecognizerCalls--;
+    }
+  }
+
+  /// Closing the recognizer while a recognition call is still in flight
+  /// against it can crash the native side — this used to happen whenever
+  /// the scan screen was backed out of mid-scan. Instead of closing
+  /// immediately, mark the service as disposing (so no NEW calls start)
+  /// and wait for any already-running call to finish first.
+  ///
+  /// [State.dispose] can't be async, so this is fired off without being
+  /// awaited by the caller — that's fine, it just means the recognizer's
+  /// native resources get released a little after the widget itself is
+  /// gone, instead of crashing while still in use.
+  Future<void> dispose() async {
+    _disposeRequested = true;
+    while (_activeRecognizerCalls > 0) {
+      await Future.delayed(const Duration(milliseconds: 50));
+    }
     _recognizer.close();
   }
 }
-  
