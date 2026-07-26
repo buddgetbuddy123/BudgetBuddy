@@ -8,7 +8,7 @@ import '../models/expense.dart';
 import '../services/category_classifier_service.dart';
 import '../services/expense_stats_service.dart';
 import '../services/notification_service.dart';
-import '../services/ocr_service.dart';
+import '../services/ocr_service.dart'; // exposes OcrEngine, OcrResult
 import '../services/receipt_parser_service.dart';
 import '../services/storage_service.dart';
 
@@ -31,6 +31,10 @@ class _ScanScreenState extends State<ScanScreen> {
 
   String? imagePath;
   String rawOcrText = '';
+
+  // Which engine actually produced the last OCR result, so the UI can be
+  // honest about whether handwriting was actually read this time.
+  OcrEngine? lastEngine;
 
   bool loading = false;
   bool isManualEntry = false;
@@ -72,6 +76,7 @@ class _ScanScreenState extends State<ScanScreen> {
       imagePath = file.path;
       isManualEntry = false;
       rawOcrText = '';
+      lastEngine = null;
       storeController.clear();
       amountController.clear();
       selectedCategory = 'needs';
@@ -91,13 +96,15 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() => loading = true);
 
     try {
-      final text = await ocr.extractText(path);
+      final ocrResult = await ocr.extractDetailed(path);
+      final text = ocrResult.text;
       final parsed = parser.parse(text);
 
       if (!mounted) return;
 
       setState(() {
         rawOcrText = text;
+        lastEngine = ocrResult.engine;
 
         // Fill merchant name
         if (parsed.merchantName.isNotEmpty &&
@@ -196,16 +203,37 @@ class _ScanScreenState extends State<ScanScreen> {
     final weekly = await storage.getWeeklyBudget();
     final monthly = await storage.getMonthlyBudget();
 
-    // Date ranges for display in the warning
-    final now = DateTime.now();
-    final monday = now.subtract(Duration(days: now.weekday - 1));
-    final sunday = monday.add(const Duration(days: 6));
+    // Date ranges based on when the user set the budget
+    final weeklyStart = await storage.getWeeklyBudgetDate();
+    final monthlyStart = await storage.getMonthlyBudgetDate();
+
     final fmt = DateFormat('MMM d');
-    final yr = DateFormat('yyyy').format(monday);
-    final weekRange = monday.month == sunday.month
-        ? '${fmt.format(monday)}–${sunday.day}, $yr'
-        : '${fmt.format(monday)} – ${fmt.format(sunday)}, $yr';
-    final monthRange = DateFormat('MMMM yyyy').format(now);
+
+    String weekRange = 'Current Week';
+    if (weeklyStart != null) {
+      final start = DateTime(
+        weeklyStart.year,
+        weeklyStart.month,
+        weeklyStart.day,
+      );
+
+      final end = start.add(const Duration(days: 6));
+
+      weekRange = '${fmt.format(start)} – ${fmt.format(end)}, ${end.year}';
+    }
+
+    String monthRange = 'Current Month';
+    if (monthlyStart != null) {
+      final start = DateTime(
+        monthlyStart.year,
+        monthlyStart.month,
+        monthlyStart.day,
+      );
+
+      final end = start.add(const Duration(days: 29));
+
+      monthRange = '${fmt.format(start)} – ${fmt.format(end)}, ${end.year}';
+    }
 
     if (!mounted) return;
 
@@ -581,7 +609,8 @@ class _ScanScreenState extends State<ScanScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Works with printed and handwritten receipts.',
+              'Handwritten receipts need an internet connection. '
+              'Printed receipts work offline.',
               style: TextStyle(fontSize: 11, color: Color(0xFF888888)),
               textAlign: TextAlign.center,
             ),
@@ -597,6 +626,52 @@ class _ScanScreenState extends State<ScanScreen> {
               child: Text(
                 'Reading receipt...',
                 style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          // Tell the user honestly which engine read this receipt —
+          // handwriting is only actually supported when cloud OCR ran.
+          if (lastEngine != null && !loading) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+              decoration: BoxDecoration(
+                color: lastEngine == OcrEngine.cloud
+                    ? const Color(0xFFE8F5E9)
+                    : const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    lastEngine == OcrEngine.cloud
+                        ? Icons.cloud_done_outlined
+                        : Icons.cloud_off_outlined,
+                    size: 16,
+                    color: lastEngine == OcrEngine.cloud
+                        ? Colors.green.shade700
+                        : Colors.orange.shade800,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      lastEngine == OcrEngine.cloud
+                          ? 'Read online — handwriting supported.'
+                          : 'Read offline — printed text only. '
+                                'Double-check the fields below.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: lastEngine == OcrEngine.cloud
+                            ? Colors.green.shade800
+                            : Colors.orange.shade900,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 8),

@@ -12,34 +12,61 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
+
+  # Storage
   shared_preferences: ^2.2.3
+
+  # Image Capture
   image_picker: ^1.1.2
+
+  # Image Processing (NEW)
+  image: 4.3.0
+  path: ^1.9.1
+
+  # Charts
   fl_chart: ^1.2.0
+
+  # OCR
   google_mlkit_text_recognition: ^0.15.1
+
+  # Cloud OCR (handwriting support)
+  http: ^1.2.0
+
+  # Utilities
   intl: ^0.20.2
   uuid: ^4.4.0
   crypto: ^3.0.3
-  flutter_local_notifications: ^22.0.1
 
-# push + in-app notifications
-permission_handler: ^11.3.1
+  # Notifications
+  flutter_local_notifications: ^21.0.0
+  permission_handler: ^11.3.1
 
-# Report Export
-pdf: ^3.10.8
-printing: ^5.13.1
-excel: ^4.0.2
-path_provider: ^2.1.3
-share_plus: ^9.0.0
+  # Reports
+  pdf: ^3.10.8
+  printing: ^5.13.1
+  excel: ^4.0.2
+  path_provider: ^2.1.3
+  share_plus: ^9.0.0
 
-# Screenshot (JPEG export)
-screenshot: ^2.3.0
+  # Screenshot Export
+  screenshot: ^3.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/images/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/app_icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/app_icon.png"

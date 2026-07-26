@@ -5,8 +5,6 @@ import 'dart:convert';
 import '../models/app_user.dart';
 import '../services/storage_service.dart';
 
-// FIX #9: Helper to hash passwords with SHA-256 before storing or comparing.
-// This is a one-way hash — users cannot recover their password, only reset it.
 String _hashPassword(String password) {
   final bytes = utf8.encode(password);
   return sha256.convert(bytes).toString();
@@ -51,7 +49,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (isLogin) {
       final users = await storage.getUsers();
-      // FIX #9: Compare hashed password instead of plaintext
+
       final match = users.where(
         (u) =>
             u.username.trim() == username &&
@@ -78,7 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final newUser = AppUser(
         id: const Uuid().v4(),
         username: username,
-        // FIX #9: Store hashed password — never store plaintext
+
         password: _hashPassword(password),
         createdAt: DateTime.now(),
       );
@@ -149,13 +147,16 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const CircleAvatar(
+                  CircleAvatar(
                     radius: 46,
-                    backgroundColor: Color(0xFFE5F2FF),
-                    child: Icon(
-                      Icons.account_balance_wallet,
-                      size: 54,
-                      color: Color(0xFF4A90E2),
+                    backgroundColor: const Color(0xFFE5F2FF),
+                    child: ClipOval(
+                      child: Image.asset(
+                        'assets/images/app_icon.png', // Replace with your image
+                        width: 70,
+                        height: 70,
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 18),

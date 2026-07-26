@@ -134,4 +134,71 @@ class StorageService {
     final prefs = await _sharedPrefs;
     await prefs.remove(_currentUserKey);
   }
+
+  // ADD these methods to your existing StorageService class
+  // (inside the class body, alongside the existing budget methods)
+
+  // ─── BUDGET START DATE STORAGE ────────────────────────────────────────────
+  // Stores the exact date when a weekly or monthly budget was set.
+  // Used by HistoryScreen to align the chart period with the budget period:
+  //   Weekly chart  → budgetSetDate to budgetSetDate + 6 days
+  //   Monthly chart → budgetSetDate to budgetSetDate + 29 days
+
+  // Key helpers
+  // (add these alongside your existing _weeklyBudgetKeyForUser / _monthlyBudgetKeyForUser)
+  String _weeklyBudgetDateKeyForUser(String userId) =>
+      'weeklyBudgetDate_$userId';
+
+  String _monthlyBudgetDateKeyForUser(String userId) =>
+      'monthlyBudgetDate_$userId';
+
+  // ── Weekly budget date ────────────────────────────────────────────────────
+
+  Future<DateTime?> getWeeklyBudgetDate() async {
+    final prefs = await _sharedPrefs;
+    final userId = await _requireCurrentUserId();
+    final iso = prefs.getString(_weeklyBudgetDateKeyForUser(userId));
+    if (iso == null) return null;
+    return DateTime.tryParse(iso);
+  }
+
+  Future<void> setWeeklyBudgetDate(DateTime date) async {
+    final prefs = await _sharedPrefs;
+    final userId = await _requireCurrentUserId();
+    await prefs.setString(
+      _weeklyBudgetDateKeyForUser(userId),
+      date.toIso8601String(),
+    );
+  }
+
+  Future<void> clearWeeklyBudgetDate() async {
+    final prefs = await _sharedPrefs;
+    final userId = await _requireCurrentUserId();
+    await prefs.remove(_weeklyBudgetDateKeyForUser(userId));
+  }
+
+  // ── Monthly budget date ───────────────────────────────────────────────────
+
+  Future<DateTime?> getMonthlyBudgetDate() async {
+    final prefs = await _sharedPrefs;
+    final userId = await _requireCurrentUserId();
+    final iso = prefs.getString(_monthlyBudgetDateKeyForUser(userId));
+    if (iso == null) return null;
+    return DateTime.tryParse(iso);
+  }
+
+  Future<void> setMonthlyBudgetDate(DateTime date) async {
+    final prefs = await _sharedPrefs;
+    final userId = await _requireCurrentUserId();
+    await prefs.setString(
+      _monthlyBudgetDateKeyForUser(userId),
+      date.toIso8601String(),
+    );
+  }
+
+  Future<void> clearMonthlyBudgetDate() async {
+    final prefs = await _sharedPrefs;
+    final userId = await _requireCurrentUserId();
+    await prefs.remove(_monthlyBudgetDateKeyForUser(userId));
+  }
 }

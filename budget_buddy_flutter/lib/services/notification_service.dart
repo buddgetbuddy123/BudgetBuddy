@@ -16,8 +16,9 @@ class NotificationService {
   Future<void> init() async {
     if (_initialized) return;
 
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      'ic_notification', // Ensure this icon is in res/drawable
+    );
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -36,7 +37,8 @@ class NotificationService {
     // Request Android 13+ notification permission
     await _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.requestNotificationsPermission();
   }
 
@@ -47,11 +49,11 @@ class NotificationService {
     required double budget,
     required String dateRange,
   }) => showBudgetExceededPush(
-        type: type,
-        spent: spent,
-        budget: budget,
-        dateRange: dateRange,
-      );
+    type: type,
+    spent: spent,
+    budget: budget,
+    dateRange: dateRange,
+  );
 
   /// Push notification shown in status bar when budget is exceeded after saving.
   Future<void> showBudgetExceededPush({
@@ -71,6 +73,7 @@ class NotificationService {
       channelDescription: 'Alerts when spending exceeds budget limit',
       importance: Importance.high,
       priority: Priority.high,
+      icon: 'ic_notification',
     );
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
@@ -82,7 +85,8 @@ class NotificationService {
     await _plugin.show(
       id: type == 'weekly' ? 1 : 2,
       title: '⚠️ $label Budget Exceeded!',
-      body: 'You spent ₱${spent.toStringAsFixed(2)} of your '
+      body:
+          'You spent ₱${spent.toStringAsFixed(2)} of your '
           '₱${budget.toStringAsFixed(2)} $label budget ($dateRange). '
           'Over by ₱${over.toStringAsFixed(2)}.',
       notificationDetails: const NotificationDetails(
@@ -135,9 +139,7 @@ class BudgetWarningDialog {
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
             Container(

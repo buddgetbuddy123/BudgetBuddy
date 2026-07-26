@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import '../services/storage_service.dart';
 import '../services/expense_stats_service.dart';
-import '../services/notification_service.dart';
 import '../widgets/budget_card.dart';
 
 class BudgetScreen extends StatefulWidget {
@@ -17,21 +15,14 @@ class BudgetScreen extends StatefulWidget {
 class _BudgetScreenState extends State<BudgetScreen> {
   final storage = StorageService();
   final statsService = ExpenseStatsService();
-  final notifications = NotificationService();
-
   double? savedWeekly;
   double? savedMonthly;
   double weeklySpent = 0;
   double monthlySpent = 0;
 
-  // Whether to show the in-app exceeded banner
-  bool weeklyExceeded = false;
-  bool monthlyExceeded = false;
-
   @override
   void initState() {
     super.initState();
-    notifications.init();
     loadBudgetAndExpenses();
   }
 
@@ -43,79 +34,33 @@ class _BudgetScreenState extends State<BudgetScreen> {
     }
   }
 
-  // ─── DATE RANGE HELPERS ──────────────────────────────────────────────────
-
-  /// Returns the current week's date range as "MMM d–d, yyyy"
-  /// e.g. "July 4–11, 2026"
-  String get weeklyDateRange {
-    final now = DateTime.now();
-    // Week starts Monday
-    final monday = now.subtract(Duration(days: now.weekday - 1));
-    final sunday = monday.add(const Duration(days: 6));
-    final fmt = DateFormat('MMM d');
-    final year = DateFormat('yyyy').format(monday);
-    if (monday.month == sunday.month) {
-      return '${fmt.format(monday)}–${sunday.day}, $year';
-    }
-    return '${fmt.format(monday)} – ${fmt.format(sunday)}, $year';
-  }
-
-  /// Returns the current month as "MMMM yyyy" e.g. "July 2026"
-  String get monthlyDateRange {
-    return DateFormat('MMMM yyyy').format(DateTime.now());
-  }
-
-  // ─── LOAD ────────────────────────────────────────────────────────────────
-
   Future<void> loadBudgetAndExpenses() async {
     try {
       final weekly = await storage.getWeeklyBudget();
       final monthly = await storage.getMonthlyBudget();
       final expenses = await storage.getExpenses();
       final stats = statsService.calculate(expenses);
-
-      final wExceeded = weekly != null && stats.weeklyTotal > weekly;
-      final mExceeded = monthly != null && stats.monthlyTotal > monthly;
-
-// Push notification when budget is exceeded
-if (wExceeded) {
-  await notifications.showBudgetExceeded(
-    type: 'weekly',
-    spent: stats.weeklyTotal,
-    budget: weekly,
-    dateRange: weeklyDateRange,
-  );
-} 
-
-if (mExceeded) {
-  await notifications.showBudgetExceeded(
-    type: 'monthly',
-    spent: stats.monthlyTotal,
-    budget: monthly,
-    dateRange: monthlyDateRange,
-  );
-}
-
       if (!mounted) return;
       setState(() {
         savedWeekly = weekly;
         savedMonthly = monthly;
         weeklySpent = stats.weeklyTotal;
         monthlySpent = stats.monthlyTotal;
-        weeklyExceeded = wExceeded;
-        monthlyExceeded = mExceeded;
       });
     } catch (err) {
       debugPrint('Error loading budget: $err');
     }
   }
 
-  // ─── INPUT BUDGET ────────────────────────────────────────────────────────
-
   Future<void> inputBudget(String type) async {
+    // FIX #7: Re-fetch the latest saved value directly from storage right
+    // before opening the dialog. This prevents stale state from pre-populating
+    // the wrong value after navigating back from AdviceScreen where a
+    // recommended budget may have been applied.
     final latestWeekly = await storage.getWeeklyBudget();
     final latestMonthly = await storage.getMonthlyBudget();
 
+    // Also sync local state so the BudgetCard UI is up to date
     if (mounted) {
       setState(() {
         savedWeekly = latestWeekly;
@@ -123,23 +68,18 @@ if (mExceeded) {
       });
     }
 
+    if (!mounted) return;
+
     final controller = TextEditingController(
       text: type == 'weekly'
           ? (latestWeekly?.round().toString() ?? '')
           : (latestMonthly?.round().toString() ?? ''),
     );
 
-    if (!mounted) return;
-
     final result = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text(
-          type == 'weekly'
-              ? 'Weekly Budget ($weeklyDateRange)'
-              : 'Monthly Budget ($monthlyDateRange)',
-          style: const TextStyle(fontSize: 16),
-        ),
+        title: Text(type == 'weekly' ? 'Weekly Budget' : 'Monthly Budget'),
         content: TextField(
           controller: controller,
           keyboardType: TextInputType.number,
@@ -147,7 +87,7 @@ if (mExceeded) {
           autofocus: true,
           decoration: const InputDecoration(
             labelText: 'Enter amount',
-            prefixText: '₱ ',   // ← PESO SIGN
+            prefixText: '₱ ',
             border: OutlineInputBorder(),
           ),
         ),
@@ -178,8 +118,12 @@ if (mExceeded) {
     try {
       if (type == 'weekly') {
         await storage.setWeeklyBudget(num);
+        // Save today as the weekly budget start date
+        await storage.setWeeklyBudgetDate(DateTime.now());
       } else {
         await storage.setMonthlyBudget(num);
+        // Save today as the monthly budget start date
+        await storage.setMonthlyBudgetDate(DateTime.now());
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -208,71 +152,25 @@ if (mExceeded) {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clear', style: TextStyle(color: Color(0xFFFF4444))),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    if (type == 'weekly') {
-      await storage.clearWeeklyBudget();
-      await notifications.cancelBudgetNotification('weekly');
-    } else {
-      await storage.clearMonthlyBudget();
-      await notifications.cancelBudgetNotification('monthly');
-    }
-    if (!mounted) return;
-    await loadBudgetAndExpenses();
-  }
-
-  // ─── IN-APP EXCEEDED BANNER ──────────────────────────────────────────────
-
-  Widget buildExceededBanner({
-    required String type,
-    required double spent,
-    required double budget,
-    required String dateRange,
-  }) {
-    final over = spent - budget;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFEBEB),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFF4444), width: 1.5),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: Color(0xFFFF4444), size: 28),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${type == 'weekly' ? 'Weekly' : 'Monthly'} Budget Exceeded!',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFFCC0000),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$dateRange  •  Over by ₱${over.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF990000),
-                  ),
-                ),
-              ],
+            child: const Text(
+              'Clear',
+              style: TextStyle(color: Color(0xFFFF4444)),
             ),
           ),
         ],
       ),
     );
+
+    if (confirmed != true) return;
+    if (type == 'weekly') {
+      await storage.clearWeeklyBudget();
+      await storage.clearWeeklyBudgetDate();
+    } else {
+      await storage.clearMonthlyBudget();
+      await storage.clearMonthlyBudgetDate();
+    }
+    if (!mounted) return;
+    await loadBudgetAndExpenses();
   }
 
   Widget buildInfoCard() {
@@ -304,10 +202,13 @@ if (mExceeded) {
           ),
           SizedBox(height: 8),
           Text(
-            'Set weekly or monthly budget limits to track your spending goals '
-            'and stay on target!',
+            'Set weekly or monthly budget limits to track your spending goals and stay on target!',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: Color(0xFF666666), height: 1.4),
+            style: TextStyle(
+              fontSize: 14,
+              color: Color(0xFF666666),
+              height: 1.4,
+            ),
           ),
         ],
       ),
@@ -359,42 +260,21 @@ if (mExceeded) {
         padding: const EdgeInsets.all(15),
         children: [
           buildInfoCard(),
-
-          // In-app exceeded banners
-          if (weeklyExceeded && savedWeekly != null)
-            buildExceededBanner(
-              type: 'weekly',
-              spent: weeklySpent,
-              budget: savedWeekly!,
-              dateRange: weeklyDateRange,
-            ),
-          if (monthlyExceeded && savedMonthly != null)
-            buildExceededBanner(
-              type: 'monthly',
-              spent: monthlySpent,
-              budget: savedMonthly!,
-              dateRange: monthlyDateRange,
-            ),
-
           BudgetCard(
             title: 'Weekly Budget',
-        
             spent: weeklySpent,
             budget: savedWeekly,
             onOpen: () => inputBudget('weekly'),
             onClear: () => clearBudget('weekly'),
             icon: Icons.calendar_today,
-      
           ),
           BudgetCard(
             title: 'Monthly Budget',
-           
             spent: monthlySpent,
             budget: savedMonthly,
             onOpen: () => inputBudget('monthly'),
             onClear: () => clearBudget('monthly'),
             icon: Icons.calendar_month_outlined,
-           
           ),
           buildTipsCard(),
           const SizedBox(height: 30),

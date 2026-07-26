@@ -3,9 +3,12 @@ import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 import 'screens/scan_screen.dart';
 import 'screens/profile_screen.dart';
+import 'services/ocr_config.dart';
 
 void main() {
   runApp(const BudgetBuddyApp());
+  debugPrint('KEY LENGTH: ${OcrConfig.cloudVisionApiKey.length}');
+  debugPrint('CONFIGURED: ${OcrConfig.isCloudOcrConfigured}');
 }
 
 class BudgetBuddyApp extends StatelessWidget {
@@ -17,9 +20,7 @@ class BudgetBuddyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Budget Buddy',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF4A90E2),
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF4A90E2)),
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
         useMaterial3: true,
       ),
@@ -33,4 +34,3 @@ class BudgetBuddyApp extends StatelessWidget {
     );
   }
 }
-
